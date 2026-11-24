@@ -1,0 +1,11 @@
+{
+  "ttlMinutes": 55,
+  "minTokens": 80000,
+  "toast": true,
+  "toastSeconds": 12,
+  "circle": {
+    "enabled": true,
+    "hot": "#ff6b35",
+    "cold": "#4a9eff"
+  }
+}

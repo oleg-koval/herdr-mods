@@ -11,7 +11,8 @@ Native add-ons for [Herdr Desktop](https://github.com/herdrdev/herdr-app). Add a
 | [Fielddesk Tools](fielddesk-tools/RECIPE.md) | Agent queue, session tree, handoff notes, worktree creation, and Jev status. |
 | [Compact Header](compact-header/RECIPE.md) | Branch and workspace context with a shortcut to the next agent needing attention. |
 | [Two-up](two-up/RECIPE.md) | Two-terminal tabs, with optional tools in separate windows. |
-| [Agent Brief](agent-brief/RECIPE.md) | Agent status, session context and optional Claude prompt-cache hints. |
+| [Agent Brief](agent-brief/RECIPE.md) | Agent status and session context, with circles that cool as a Claude prompt cache ages. |
+| [Cache Expiry](cache-expiry/RECIPE.md) | Cache-expiry toast naming the space and tab, and the cooling colours Agent Brief draws. |
 | [PR Review](pr-review/RECIPE.md) | A review queue and optional Dock badge for an existing compatible review engine. |
 
 ## Install
