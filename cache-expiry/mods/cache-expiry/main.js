@@ -8,12 +8,13 @@
 
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, focused, exec, home, readTextFile, notify, shared, setShared, checking, theme, props, run, closeOverlay } from "herdr";
+import { agents, focused, exec, home, appHome, readTextFile, notify, shared, setShared, checking, theme, props, run, closeOverlay } from "herdr";
 import {
-  KEYS, LIMITS, readSettings, stepped,
+  KEYS, LIMITS, readSettings, stepped, legacySettings,
   lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText,
 } from "./cold.js";
 
+const LEGACY_IMPORTED = "cache-expiry.legacyConfigImported";
 const isClaude = (a) => a.app === "claude-code";
 const conf = () => readSettings((key) => shared(key));
 const HOT = [["#ff6b35", "Orange"], ["#ef4444", "Red"], ["#f59e0b", "Amber"], ["#ec4899", "Pink"]];
@@ -29,11 +30,34 @@ export default class CacheExpiry extends View {
     this.warned = {};
     this.published = "";
     this.lastFocus = null;
+    this.lastSettings = JSON.stringify(conf());
     if (this.overlay || checking()) return;
+    cx.spawn(async () => this.importLegacyConfig());
     this.scan(cx);
     cx.timer.every(60_000, (cx) => this.scan(cx));
     cx.timer.every(5_000, (cx) => this.tick(cx));
     cx.timer.every(1_500, (cx) => this.watchFocus(cx));
+    cx.timer.every(500, () => this.watchSettings());
+  }
+
+  // Before the settings dialog, settings lived in config.json beside this file. Import what an
+  // older install customised there once, without overwriting anything already set in the dialog.
+  async importLegacyConfig() {
+    if (shared(LEGACY_IMPORTED)) return;
+    const text = await readTextFile(`${appHome()}/mods/cache-expiry/config.json`).catch(() => null);
+    for (const [key, value] of Object.entries(legacySettings(text))) {
+      if (shared(key) == null) setShared(key, value);
+    }
+    setShared(LEGACY_IMPORTED, true);
+  }
+
+  // The dialog is a separate copy that only writes shared keys, so the colours it changes are
+  // published from here as soon as the change is seen.
+  watchSettings() {
+    const now = JSON.stringify(conf());
+    if (now === this.lastSettings) return;
+    this.lastSettings = now;
+    this.publish();
   }
 
   async readUsage(address) {
@@ -160,29 +184,37 @@ export default class CacheExpiry extends View {
   }
 
   settingsDialog(t, c) {
-    const set = (key, value) => () => setShared(key, value);
+    // Handlers read the stored value when clicked, not the one this render saw, so two quick
+    // clicks before a redraw make two steps.
+    const flip = (key, read) => () => setShared(key, !read(conf()));
+    const step = (key, read, sign, limits, store = (n) => n) => () =>
+      setShared(key, store(stepped(read(conf()), sign * limits.step, limits)));
+    const minutes = (n) => ({ n, unit: "minute" });
+    const ttl = (c) => c.ttlMinutes;
+    const toastSeconds = (c) => c.toastSeconds;
+    const minTokens = (c) => c.minTokens;
     return v_flex().size_full().bg(t.popover).p(20).gap(2).text_color(t.foreground)
       .child(div().text_size(16).font_semibold().child("Cache expiry"))
       .child(div().pb(8).text_size(12.5).text_color(t.dim).child("How Claude prompt caches show as they go cold."))
       .child(this.gradient(t, c))
       .child(this.row(t, "Cooling circles", "Idle and done circles in Agent Brief cool from hot to cold.",
-        this.toggle(t, "ce-circles", c.circle.enabled, set(KEYS.circles, !c.circle.enabled))))
+        this.toggle(t, "ce-circles", c.circle.enabled, flip(KEYS.circles, (s) => s.circle.enabled))))
       .child(this.row(t, "Hot colour", "A cache that was just used.", this.swatches(t, "ce-hot", HOT, c.circle.hot, KEYS.hot)))
       .child(this.row(t, "Cold colour", "A cache that has expired.", this.swatches(t, "ce-cold", COLD, c.circle.cold, KEYS.cold)))
       .child(this.row(t, "Cold after", "Claude's prompt cache lasts one hour.",
         this.stepper(t, "ce-ttl", `${c.ttlMinutes} min`,
-          set(KEYS.ttl, { n: stepped(c.ttlMinutes, -LIMITS.ttlMinutes.step, LIMITS.ttlMinutes), unit: "minute" }),
-          set(KEYS.ttl, { n: stepped(c.ttlMinutes, LIMITS.ttlMinutes.step, LIMITS.ttlMinutes), unit: "minute" }))))
+          step(KEYS.ttl, ttl, -1, LIMITS.ttlMinutes, minutes),
+          step(KEYS.ttl, ttl, 1, LIMITS.ttlMinutes, minutes))))
       .child(this.row(t, "Toast on a cold tab", "Names the space and tab when you switch to it.",
-        this.toggle(t, "ce-toast", c.toast, set(KEYS.toast, !c.toast))))
+        this.toggle(t, "ce-toast", c.toast, flip(KEYS.toast, (s) => s.toast))))
       .child(this.row(t, "Toast stays", null,
         this.stepper(t, "ce-toast-seconds", `${c.toastSeconds} s`,
-          set(KEYS.toastSeconds, stepped(c.toastSeconds, -LIMITS.toastSeconds.step, LIMITS.toastSeconds)),
-          set(KEYS.toastSeconds, stepped(c.toastSeconds, LIMITS.toastSeconds.step, LIMITS.toastSeconds)))))
+          step(KEYS.toastSeconds, toastSeconds, -1, LIMITS.toastSeconds),
+          step(KEYS.toastSeconds, toastSeconds, 1, LIMITS.toastSeconds))))
       .child(this.row(t, "Warn from", "Smaller conversations get no toast and no cold mark.",
         this.stepper(t, "ce-min-tokens", `${Math.round(c.minTokens / 1000)}k tokens`,
-          set(KEYS.minTokens, stepped(c.minTokens, -LIMITS.minTokens.step, LIMITS.minTokens)),
-          set(KEYS.minTokens, stepped(c.minTokens, LIMITS.minTokens.step, LIMITS.minTokens)))))
+          step(KEYS.minTokens, minTokens, -1, LIMITS.minTokens),
+          step(KEYS.minTokens, minTokens, 1, LIMITS.minTokens))))
       .child(div().flex_1())
       .child(h_flex().gap(8).justify_end().pt(12)
         .child(this.button(t, "ce-reset", "Reset to defaults", () => Object.values(KEYS).forEach((key) => setShared(key, null))))

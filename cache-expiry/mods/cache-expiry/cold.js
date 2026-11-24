@@ -54,6 +54,35 @@ export function readSettings(get) {
   };
 }
 
+/**
+ * The shared values for what an old config.json customised: only valid values that differ from
+ * the defaults. Missing, unreadable or invalid files give {}.
+ */
+export function legacySettings(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text ?? "");
+  } catch {
+    return {};
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const circle = raw.circle && typeof raw.circle === "object" ? raw.circle : {};
+  const candidates = [
+    [KEYS.ttl, { n: raw.ttlMinutes, unit: "minute" }],
+    [KEYS.minTokens, raw.minTokens],
+    [KEYS.toast, raw.toast],
+    [KEYS.toastSeconds, raw.toastSeconds],
+    [KEYS.circles, circle.enabled],
+    [KEYS.hot, circle.hot],
+    [KEYS.cold, circle.cold],
+  ];
+  const defaults = readSettings(() => undefined);
+  return Object.fromEntries(candidates.filter(([key, value]) => {
+    const alone = readSettings((k) => (k === key ? value : undefined));
+    return JSON.stringify(alone) !== JSON.stringify(defaults);
+  }));
+}
+
 /** A stepped number kept inside its limits. */
 export function stepped(value, delta, { min, max }) {
   return Math.min(max, Math.max(min, value + delta));

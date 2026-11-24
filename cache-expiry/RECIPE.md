@@ -29,7 +29,7 @@ Click the strip (it says **Settings** on the right) to open the settings dialog,
 | Toast stays | 12 s | How long the toast stays. |
 | Warn from | 80k tokens | Smaller conversations get no toast and no cold mark. |
 
-The same settings are declared in `mod.json`, so a Settings screen with a Mods page lists them too. Values are stored with `setShared` under `cache-expiry.*`; **Reset to defaults** clears them.
+The same settings are declared in `mod.json`, so a Settings screen with a Mods page lists them too. Values are stored with `setShared` under `cache-expiry.*`; **Reset to defaults** clears them. An older install's `config.json` is imported once on first run; anything already set in the dialog wins.
 
 The mod reads the local transcript that `herdr-hook.sh` records for each terminal in `~/.local/state/herdr-idle/<terminal>`, using `tail`. Without that hook state there is nothing to cool, and the mod does nothing.
 

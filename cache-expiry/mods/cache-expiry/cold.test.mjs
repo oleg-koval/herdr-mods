@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  readSettings, durationMinutes, stepped, DEFAULTS, KEYS, LIMITS,
+  readSettings, durationMinutes, stepped, legacySettings, DEFAULTS, KEYS, LIMITS,
   lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText,
 } from "./cold.js";
 
@@ -90,6 +90,24 @@ test("durationMinutes reads Herdr durations and bare minutes", () => {
   assert.equal(durationMinutes(30), 30);
   assert.equal(durationMinutes({ n: 1, unit: "day" }), null);
   assert.equal(durationMinutes(undefined), null);
+});
+
+test("legacySettings imports only valid, customised config.json values", () => {
+  const text = JSON.stringify({
+    ttlMinutes: 40,
+    minTokens: 80_000,
+    toast: false,
+    toastSeconds: 999,
+    circle: { enabled: true, hot: "#ef4444", cold: "blue" },
+  });
+  assert.deepEqual(legacySettings(text), {
+    [KEYS.ttl]: { n: 40, unit: "minute" },
+    [KEYS.toast]: false,
+    [KEYS.hot]: "#ef4444",
+  });
+  assert.deepEqual(legacySettings(null), {});
+  assert.deepEqual(legacySettings("{ nope"), {});
+  assert.deepEqual(legacySettings("[1]"), {});
 });
 
 test("stepped stays inside its limits", () => {
