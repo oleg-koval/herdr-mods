@@ -3,7 +3,7 @@
   "size": 26,
   "title": "Cache expiry",
   "icon": "mdi-cog-outline",
-  "overlay": { "kind": "dialog", "width": 520, "height": 600 },
+  "overlay": { "kind": "dialog", "width": 520, "height": 680 },
   "palette": [
     { "title": "Cache expiry settings", "command": "mod.open", "args": { "name": "cache-expiry" }, "words": "claude prompt cache cold ttl toast circles" }
   ],
