@@ -1,1 +1,31 @@
-{ "place": "bottom", "size": 26, "title": "Cache expiry" }
+{
+  "place": "bottom",
+  "size": 26,
+  "title": "Cache expiry",
+  "icon": "mdi-cog-outline",
+  "overlay": { "kind": "dialog", "width": 520, "height": 680 },
+  "palette": [
+    { "title": "Cache expiry settings", "command": "mod.open", "args": { "name": "cache-expiry" }, "words": "claude prompt cache cold ttl toast circles" }
+  ],
+  "settings": [
+    { "key": "cache-expiry.circles", "title": "Cooling circles", "about": "Idle and done Claude circles in Agent Brief cool from hot to cold as the prompt cache ages.", "type": "boolean", "default": true },
+    { "key": "cache-expiry.hot", "title": "Hot colour", "about": "A cache that was just used.", "type": "choice", "default": "#ff6b35",
+      "options": [
+        { "value": "#ff6b35", "label": "Orange" },
+        { "value": "#ef4444", "label": "Red" },
+        { "value": "#f59e0b", "label": "Amber" },
+        { "value": "#ec4899", "label": "Pink" }
+      ] },
+    { "key": "cache-expiry.cold", "title": "Cold colour", "about": "A cache that has expired.", "type": "choice", "default": "#4a9eff",
+      "options": [
+        { "value": "#4a9eff", "label": "Blue" },
+        { "value": "#22d3ee", "label": "Cyan" },
+        { "value": "#a78bfa", "label": "Violet" },
+        { "value": "#8b949e", "label": "Grey" }
+      ] },
+    { "key": "cache-expiry.ttl", "title": "Cold after", "about": "Idle time after which the cache counts as expired. Claude's prompt cache lasts one hour.", "type": "duration", "default": { "n": 55, "unit": "minute" }, "units": ["minute", "hour"] },
+    { "key": "cache-expiry.toast", "title": "Toast on a cold tab", "about": "When you switch to a cold Claude tab, one toast names its space and tab.", "type": "boolean", "default": true },
+    { "key": "cache-expiry.toastSeconds", "title": "Toast stays (seconds)", "type": "number", "default": 12, "min": 3, "max": 60, "step": 1 },
+    { "key": "cache-expiry.minTokens", "title": "Warn from (tokens)", "about": "Smaller conversations get no toast and no cold mark: rewriting them is cheap.", "type": "number", "default": 80000, "min": 0, "max": 1000000, "step": 10000 }
+  ]
+}

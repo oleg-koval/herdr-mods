@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readConfig, DEFAULTS, lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText } from "./cold.js";
+import { readFileSync } from "node:fs";
+import {
+  readSettings, durationMinutes, stepped, legacySettings, DEFAULTS, KEYS, LIMITS,
+  lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText,
+} from "./cold.js";
 
 test("applyRead: ok sets, absent clears, failed keeps the last known usage", () => {
   const old = { at: 1, tokens: 10 };
@@ -60,25 +64,64 @@ test("coldness warns only past the TTL and above the token floor", () => {
   assert.equal(coldness({ at: now - 67 * MIN, tokens: 5_000 }, now, opts), null, "too small");
 });
 
-test("readConfig: missing file gives defaults, bad values fall back one by one", () => {
-  assert.deepEqual(readConfig(null), { config: DEFAULTS, problem: null });
-  const { config, problem } = readConfig(JSON.stringify({
-    ttlMinutes: -3,
-    toast: "yes",
-    circle: { enabled: false, hot: "orange", cold: "#123" },
-  }));
-  assert.equal(problem, null);
-  assert.equal(config.ttlMinutes, DEFAULTS.ttlMinutes);
-  assert.equal(config.toast, DEFAULTS.toast);
-  assert.equal(config.circle.enabled, false);
-  assert.equal(config.circle.hot, DEFAULTS.circle.hot);
-  assert.equal(config.circle.cold, "#123");
+test("readSettings: unset gives defaults, bad values fall back one by one", () => {
+  assert.deepEqual(readSettings(() => undefined), { ...DEFAULTS, circle: { ...DEFAULTS.circle } });
+  assert.deepEqual(readSettings(() => null), { ...DEFAULTS, circle: { ...DEFAULTS.circle } });
+  const stored = {
+    [KEYS.ttl]: { n: -3, unit: "minute" },
+    [KEYS.toast]: "yes",
+    [KEYS.circles]: false,
+    [KEYS.hot]: "orange",
+    [KEYS.cold]: "#123",
+    [KEYS.minTokens]: 5_000_000,
+  };
+  const c = readSettings((key) => stored[key]);
+  assert.equal(c.ttlMinutes, DEFAULTS.ttlMinutes);
+  assert.equal(c.toast, DEFAULTS.toast);
+  assert.equal(c.minTokens, DEFAULTS.minTokens);
+  assert.equal(c.circle.enabled, false);
+  assert.equal(c.circle.hot, DEFAULTS.circle.hot);
+  assert.equal(c.circle.cold, "#123");
 });
 
-test("readConfig: invalid JSON reports a problem and uses defaults", () => {
-  const { config, problem } = readConfig("{ nope");
-  assert.match(problem, /not valid JSON/);
-  assert.equal(config, DEFAULTS);
+test("durationMinutes reads Herdr durations and bare minutes", () => {
+  assert.equal(durationMinutes({ n: 2, unit: "hour" }), 120);
+  assert.equal(durationMinutes({ n: 40, unit: "minute" }), 40);
+  assert.equal(durationMinutes(30), 30);
+  assert.equal(durationMinutes({ n: 1, unit: "day" }), null);
+  assert.equal(durationMinutes(undefined), null);
+});
+
+test("legacySettings imports only valid, customised config.json values", () => {
+  const text = JSON.stringify({
+    ttlMinutes: 40,
+    minTokens: 80_000,
+    toast: false,
+    toastSeconds: 999,
+    circle: { enabled: true, hot: "#ef4444", cold: "blue" },
+  });
+  assert.deepEqual(legacySettings(text), {
+    [KEYS.ttl]: { n: 40, unit: "minute" },
+    [KEYS.toast]: false,
+    [KEYS.hot]: "#ef4444",
+  });
+  assert.deepEqual(legacySettings(null), {});
+  assert.deepEqual(legacySettings("{ nope"), {});
+  assert.deepEqual(legacySettings("[1]"), {});
+});
+
+test("stepped stays inside its limits", () => {
+  assert.equal(stepped(55, 5, LIMITS.ttlMinutes), 60);
+  assert.equal(stepped(5, -5, LIMITS.ttlMinutes), 5);
+  assert.equal(stepped(60, 1, LIMITS.toastSeconds), 60);
+});
+
+test("mod.json declares every setting key with the code's defaults", () => {
+  const manifest = JSON.parse(readFileSync(new URL("./mod.json", import.meta.url), "utf8"));
+  const declared = Object.fromEntries(manifest.settings.map((s) => [s.key, s.default]));
+  assert.deepEqual(Object.keys(declared).sort(), Object.values(KEYS).sort());
+  const fromManifest = readSettings((key) => declared[key]);
+  assert.deepEqual(fromManifest, { ...DEFAULTS, circle: { ...DEFAULTS.circle } });
 });
 
 test("lastUsage takes the newest assistant usage with its timestamp", () => {

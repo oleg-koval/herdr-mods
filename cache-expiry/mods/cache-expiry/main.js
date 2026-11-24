@@ -3,32 +3,61 @@
 // read by agent-brief), posts one toast, naming the space and tab, when you switch to a cold
 // conversation before you type, and draws a one-line summary strip. Herdr runs a mod copy only
 // while its block is in the layout, so the strip is what keeps this mod alive.
-// Settings: config.json beside this file, read once a minute.
+// Clicking the strip opens this mod again as its settings dialog (mod.open); that copy only draws
+// the settings. The same settings are listed in Settings > Mods.
 
 import { View, div } from "gpui-kit";
-import { h_flex } from "gpui-base";
-import { agents, focused, exec, home, appHome, readTextFile, notify, setShared, checking, theme } from "herdr";
-import { readConfig, lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText } from "./cold.js";
+import { h_flex, v_flex } from "gpui-base";
+import { agents, focused, exec, home, appHome, readTextFile, notify, shared, setShared, checking, theme, props, run, closeOverlay } from "herdr";
+import {
+  KEYS, LIMITS, readSettings, stepped, legacySettings,
+  lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText,
+} from "./cold.js";
 
-const CONFIG = () => `${appHome()}/mods/cache-expiry/config.json`;
+const LEGACY_IMPORTED = "cache-expiry.legacyConfigImported";
 const isClaude = (a) => a.app === "claude-code";
+const conf = () => readSettings((key) => shared(key));
+const HOT = [["#ff6b35", "Orange"], ["#ef4444", "Red"], ["#f59e0b", "Amber"], ["#ec4899", "Pink"]];
+const COLD = [["#4a9eff", "Blue"], ["#22d3ee", "Cyan"], ["#a78bfa", "Violet"], ["#8b949e", "Grey"]];
 
 export default class CacheExpiry extends View {
   init(_props, cx) {
-    this.config = readConfig(null).config;
+    this.overlay = props()?.overlay ?? null;
     this.reads = { usage: {}, seqs: {} };
     this.seq = 0;
     this.scanning = false;
     this.statuses = {};
     this.warned = {};
-    this.problem = null;
     this.published = "";
     this.lastFocus = null;
-    if (checking()) return;
+    this.lastSettings = JSON.stringify(conf());
+    if (this.overlay || checking()) return;
+    cx.spawn(async () => this.importLegacyConfig());
     this.scan(cx);
     cx.timer.every(60_000, (cx) => this.scan(cx));
     cx.timer.every(5_000, (cx) => this.tick(cx));
     cx.timer.every(1_500, (cx) => this.watchFocus(cx));
+    cx.timer.every(500, () => this.watchSettings());
+  }
+
+  // Before the settings dialog, settings lived in config.json beside this file. Import what an
+  // older install customised there once, without overwriting anything already set in the dialog.
+  async importLegacyConfig() {
+    if (shared(LEGACY_IMPORTED)) return;
+    const text = await readTextFile(`${appHome()}/mods/cache-expiry/config.json`).catch(() => null);
+    for (const [key, value] of Object.entries(legacySettings(text))) {
+      if (shared(key) == null) setShared(key, value);
+    }
+    setShared(LEGACY_IMPORTED, true);
+  }
+
+  // The dialog is a separate copy that only writes shared keys, so the colours it changes are
+  // published from here as soon as the change is seen.
+  watchSettings() {
+    const now = JSON.stringify(conf());
+    if (now === this.lastSettings) return;
+    this.lastSettings = now;
+    this.publish();
   }
 
   async readUsage(address) {
@@ -57,12 +86,6 @@ export default class CacheExpiry extends View {
     this.scanning = true;
     cx.spawn(async (cx) => {
       try {
-        const read = readConfig(await readTextFile(CONFIG()));
-        this.config = read.config;
-        if (read.problem && read.problem !== this.problem) {
-          notify({ title: "Cache expiry: config not used", body: read.problem, level: "warning", timeout: 10_000 });
-        }
-        this.problem = read.problem;
         const live = agents().filter(isClaude).map((a) => a.address);
         for (const address of live) await this.load(address);
         this.reads = keepOnly(this.reads, live);
@@ -91,7 +114,7 @@ export default class CacheExpiry extends View {
   }
 
   publish() {
-    const { ttlMinutes, minTokens, circle } = this.config;
+    const { ttlMinutes, minTokens, circle } = conf();
     const ttlMs = ttlMinutes * 60_000;
     const now = Date.now();
     const heat = {};
@@ -127,9 +150,10 @@ export default class CacheExpiry extends View {
   }
 
   maybeToast(address) {
-    if (!this.config.toast) return;
+    const c = conf();
+    if (!c.toast) return;
     const u = this.reads.usage[address];
-    const cold = u && coldness(u, Date.now(), { ttlMs: this.config.ttlMinutes * 60_000, minTokens: this.config.minTokens });
+    const cold = u && coldness(u, Date.now(), { ttlMs: c.ttlMinutes * 60_000, minTokens: c.minTokens });
     // one toast per cold spell: a new turn gives the terminal a new idle time
     if (!cold || this.warned[address] === cold.since) return;
     this.warned = { ...this.warned, [address]: cold.since };
@@ -139,16 +163,111 @@ export default class CacheExpiry extends View {
       title: `${where}: cache expired`,
       body: `Idle ${cold.idleMin} min, ~${Math.round(cold.tokens / 1000)}k tokens. Your next prompt rewrites all of it at the cache-write price. If the task changed, /clear and continue from a short handoff.`,
       level: "warning",
-      timeout: this.config.toastSeconds * 1000,
+      timeout: c.toastSeconds * 1000,
     });
   }
 
   render() {
-    const t = theme();
-    const s = summarize(this.reads.usage, Date.now(), this.config.ttlMinutes * 60_000);
-    const dot = s.cold + s.warm === 0 ? t.muted : s.cold ? this.config.circle.cold : this.config.circle.hot;
-    return h_flex().size_full().px(10).gap(6).items_center().bg(t.chrome).text_size(11.5).text_color(t.muted)
+    return this.overlay ? this.settingsDialog(theme(), conf()) : this.strip(theme(), conf());
+  }
+
+  strip(t, c) {
+    const s = summarize(this.reads.usage, Date.now(), c.ttlMinutes * 60_000);
+    const dot = s.cold + s.warm === 0 ? t.muted : s.cold ? c.circle.cold : c.circle.hot;
+    return h_flex().id("cache-expiry-strip").size_full().px(10).gap(6).items_center().bg(t.chrome)
+      .text_size(11.5).text_color(t.muted).cursor_pointer()
+      .hover((st) => st.bg(t.hover))
+      .on_click(() => run("mod.open", { name: "cache-expiry" }))
       .child(div().w(8).h(8).rounded(4).flex_none().bg(dot))
-      .child(div().flex_1().truncate().child(stripText(s)));
+      .child(div().flex_1().truncate().child(stripText(s)))
+      .child(div().flex_none().text_color(t.dim).child("Settings"));
+  }
+
+  settingsDialog(t, c) {
+    // Handlers read the stored value when clicked, not the one this render saw, so two quick
+    // clicks before a redraw make two steps.
+    const flip = (key, read) => () => setShared(key, !read(conf()));
+    const step = (key, read, sign, limits, store = (n) => n) => () =>
+      setShared(key, store(stepped(read(conf()), sign * limits.step, limits)));
+    const minutes = (n) => ({ n, unit: "minute" });
+    const ttl = (c) => c.ttlMinutes;
+    const toastSeconds = (c) => c.toastSeconds;
+    const minTokens = (c) => c.minTokens;
+    return v_flex().size_full().bg(t.popover).p(20).gap(2).text_color(t.foreground)
+      .child(div().text_size(16).font_semibold().child("Cache expiry"))
+      .child(div().pb(8).text_size(12.5).text_color(t.dim).child("How Claude prompt caches show as they go cold."))
+      .child(this.gradient(t, c))
+      .child(this.row(t, "Cooling circles", "Idle and done circles in Agent Brief cool from hot to cold.",
+        this.toggle(t, "ce-circles", c.circle.enabled, flip(KEYS.circles, (s) => s.circle.enabled))))
+      .child(this.row(t, "Hot colour", "A cache that was just used.", this.swatches(t, "ce-hot", HOT, c.circle.hot, KEYS.hot)))
+      .child(this.row(t, "Cold colour", "A cache that has expired.", this.swatches(t, "ce-cold", COLD, c.circle.cold, KEYS.cold)))
+      .child(this.row(t, "Cold after", "Claude's prompt cache lasts one hour.",
+        this.stepper(t, "ce-ttl", `${c.ttlMinutes} min`,
+          step(KEYS.ttl, ttl, -1, LIMITS.ttlMinutes, minutes),
+          step(KEYS.ttl, ttl, 1, LIMITS.ttlMinutes, minutes))))
+      .child(this.row(t, "Toast on a cold tab", "Names the space and tab when you switch to it.",
+        this.toggle(t, "ce-toast", c.toast, flip(KEYS.toast, (s) => s.toast))))
+      .child(this.row(t, "Toast stays", null,
+        this.stepper(t, "ce-toast-seconds", `${c.toastSeconds} s`,
+          step(KEYS.toastSeconds, toastSeconds, -1, LIMITS.toastSeconds),
+          step(KEYS.toastSeconds, toastSeconds, 1, LIMITS.toastSeconds))))
+      .child(this.row(t, "Warn from", "Smaller conversations get no toast and no cold mark.",
+        this.stepper(t, "ce-min-tokens", `${Math.round(c.minTokens / 1000)}k tokens`,
+          step(KEYS.minTokens, minTokens, -1, LIMITS.minTokens),
+          step(KEYS.minTokens, minTokens, 1, LIMITS.minTokens))))
+      .child(div().flex_1())
+      .child(h_flex().gap(8).justify_end().pt(12)
+        .child(this.button(t, "ce-reset", "Reset to defaults", () => Object.values(KEYS).forEach((key) => setShared(key, null))))
+        .child(this.button(t, "ce-done", "Done", () => closeOverlay(this.overlay))));
+  }
+
+  gradient(t, c) {
+    const steps = 16;
+    return v_flex().gap(4).pb(8)
+      .child(h_flex().h(10).rounded(5).overflow_hidden().children(
+        Array.from({ length: steps }, (_, i) => div().flex_1().h_full().bg(mixHex(c.circle.hot, c.circle.cold, i / (steps - 1)))),
+      ))
+      .child(h_flex().text_size(11).text_color(t.dim)
+        .child(div().flex_1().child("just used"))
+        .child(div().child(`cold at ${c.ttlMinutes} min`)));
+  }
+
+  row(t, title, about, control) {
+    return h_flex().w_full().gap(16).py(10).items_center().border_b(1).border_color(t.border)
+      .child(v_flex().flex_1().min_w(0).gap(2)
+        .child(div().text_size(13.5).child(title))
+        .when(Boolean(about), (el) => el.child(div().text_size(12).text_color(t.dim).child(about))))
+      .child(div().flex_none().child(control));
+  }
+
+  toggle(t, id, on, onClick) {
+    return div().id(id).w(36).h(20).rounded(10).p(2).cursor_pointer().flex()
+      .bg(on ? t.accent : t.hover)
+      .when(on, (el) => el.justify_end())
+      .on_click(onClick)
+      .child(div().w(16).h(16).rounded(8).bg(on ? t.accent_foreground : t.muted));
+  }
+
+  stepper(t, id, label, onMinus, onPlus) {
+    const b = (k, text, f) => div().id(`${id}-${k}`).w(26).h(26).rounded(6).flex().items_center().justify_center()
+      .cursor_pointer().text_size(15).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .on_click(f).child(text);
+    return h_flex().items_center().gap(4)
+      .child(b("minus", "−", onMinus))
+      .child(div().min_w(84).text_size(13).text_center().child(label))
+      .child(b("plus", "+", onPlus));
+  }
+
+  swatches(t, id, options, current, key) {
+    return h_flex().gap(6).children(options.map(([hex, _name]) =>
+      div().id(`${id}-${hex.slice(1)}`).w(22).h(22).rounded(11).bg(hex).cursor_pointer()
+        .border_2().border_color(hex.toLowerCase() === current.toLowerCase() ? t.foreground : t.border)
+        .on_click(() => setShared(key, hex)),
+    ));
+  }
+
+  button(t, id, label, onClick) {
+    return div().id(id).px(12).py(5).rounded(7).border_1().border_color(t.border).bg(t.raised)
+      .cursor_pointer().text_size(13).hover((s) => s.bg(t.hover)).on_click(onClick).child(label);
   }
 }
