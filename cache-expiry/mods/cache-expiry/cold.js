@@ -84,3 +84,43 @@ function rgb(hex) {
   const s = hex.length === 4 ? [...hex.slice(1)].map((c) => c + c).join("") : hex.slice(1);
   return [0, 2, 4].map((i) => parseInt(s.slice(i, i + 2), 16));
 }
+
+/**
+ * Folds one transcript read into { usage, seqs }. Reads overlap (the minute scan, a focus, a status
+ * change), so a read that started before the one already applied is dropped. "failed" (tail timed
+ * out or errored) keeps the last known usage; "absent" (no transcript, or no assistant turn) clears it.
+ */
+export function applyRead(state, address, seq, result) {
+  if (seq <= (state.seqs[address] ?? 0)) return state;
+  const seqs = { ...state.seqs, [address]: seq };
+  if (result.state === "ok") return { usage: { ...state.usage, [address]: result.usage }, seqs };
+  if (result.state === "absent") {
+    const { [address]: _gone, ...usage } = state.usage;
+    return { usage, seqs };
+  }
+  return { usage: state.usage, seqs };
+}
+
+/** Drops terminals that are no longer Claude agents. */
+export function keepOnly(state, addresses) {
+  const keep = new Set(addresses);
+  const pick = (map) => Object.fromEntries(Object.entries(map).filter(([address]) => keep.has(address)));
+  return { usage: pick(state.usage), seqs: pick(state.seqs) };
+}
+
+/** { cold, warm, nextColdMin } over every tracked cache; nextColdMin is null when none is warm. */
+export function summarize(usage, now, ttlMs) {
+  const idles = Object.values(usage).map((u) => now - u.at);
+  const left = idles.filter((idle) => idle < ttlMs).map((idle) => Math.ceil((ttlMs - idle) / 60_000));
+  return {
+    cold: idles.length - left.length,
+    warm: left.length,
+    nextColdMin: left.length ? Math.min(...left) : null,
+  };
+}
+
+export function stripText({ cold, warm, nextColdMin }) {
+  if (cold + warm === 0) return "No Claude caches tracked";
+  const next = nextColdMin === null ? "" : ` · next cold in ${nextColdMin}m`;
+  return `Claude cache: ${cold} cold · ${warm} warm${next}`;
+}

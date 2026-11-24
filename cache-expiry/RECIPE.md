@@ -2,7 +2,18 @@
 
 Tells you when a Claude terminal's prompt cache has gone cold. Each Claude agent's status circle cools from hot to cold as its cache ages, so you can see at a glance which conversations will be rewritten at the cache-write price on the next prompt. Switching to a cold conversation posts one toast that names its space and tab.
 
-Copy [mods/cache-expiry](mods/cache-expiry/) into Herdr's `mods/` directory. It has no visible surface of its own: it publishes the circle colours that [Agent Brief](../agent-brief/RECIPE.md) draws, and posts the toast. Like the Toast mod, it has no layout block; copying the folder is enough.
+Copy [mods/cache-expiry](mods/cache-expiry/) into Herdr's `mods/` directory. It publishes the circle colours that [Agent Brief](../agent-brief/RECIPE.md) draws, posts the toast, and shows a one-line strip: `Claude cache: 1 cold · 2 warm · next cold in 5m`.
+
+Herdr runs a mod only while its block is in the layout, so the strip is what keeps it working. The first time Herdr sees the folder it docks the strip at the bottom of the shown layout. Move it anywhere you like, for example under Agent Brief:
+
+```json
+{ "type": "column", "size": { "px": 300 }, "children": [
+  { "type": "block", "content": { "mod": "agent-brief" }, "size": { "weight": 1 } },
+  { "type": "block", "content": { "mod": "cache-expiry" }, "size": { "px": 26 }, "resizable": false }
+] }
+```
+
+If you remove the block, the circles stop cooling and the toast stops.
 
 Settings live in `mods/cache-expiry/config.json`, re-read every minute:
 
