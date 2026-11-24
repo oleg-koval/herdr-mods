@@ -1,0 +1,18 @@
+{
+  "before": "c9ab090fd1c13a7b8e882f129c17ce35adf7a173",
+  "after": "5748f25ffa037e5b83c7a14e30f4c51a8feefcda",
+  "parts": [
+    {
+      "name": "Cache strip under Agent Brief",
+      "mobile_applicable": false,
+      "desktop_before": "strip-before.png",
+      "desktop_after": "strip-after.png"
+    },
+    {
+      "name": "Settings dialog - none before so the area is blurred",
+      "mobile_applicable": false,
+      "desktop_before": "dialog-before.png",
+      "desktop_after": "dialog-after.png"
+    }
+  ]
+}
