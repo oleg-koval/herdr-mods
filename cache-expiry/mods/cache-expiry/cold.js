@@ -8,34 +8,55 @@ export const DEFAULTS = Object.freeze({
   circle: Object.freeze({ enabled: true, hot: "#ff6b35", cold: "#4a9eff" }),
 });
 
-const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+/** The shared keys the settings dialog and Settings > Mods write; mod.json declares the same ones. */
+export const KEYS = Object.freeze({
+  ttl: "cache-expiry.ttl",
+  minTokens: "cache-expiry.minTokens",
+  toast: "cache-expiry.toast",
+  toastSeconds: "cache-expiry.toastSeconds",
+  circles: "cache-expiry.circles",
+  hot: "cache-expiry.hot",
+  cold: "cache-expiry.cold",
+});
 
-/** { config, problem }: the file's values over DEFAULTS. A bad value falls back, and `problem` says why. */
-export function readConfig(text) {
-  if (text == null || text.trim() === "") return { config: DEFAULTS, problem: null };
-  let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch (err) {
-    return { config: DEFAULTS, problem: `config.json is not valid JSON: ${err.message}` };
-  }
-  const c = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-  const circle = c.circle && typeof c.circle === "object" ? c.circle : {};
-  const num = (v, d, lo, hi) => (typeof v === "number" && v >= lo && v <= hi ? v : d);
+export const LIMITS = Object.freeze({
+  ttlMinutes: { min: 5, max: 600, step: 5 },
+  minTokens: { min: 0, max: 1_000_000, step: 10_000 },
+  toastSeconds: { min: 3, max: 60, step: 1 },
+});
+
+const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+const UNIT_MINUTES = { minute: 1, hour: 60 };
+
+/** Minutes from a Herdr duration setting ({ n, unit }), or a bare number of minutes; else null. */
+export function durationMinutes(v) {
+  if (typeof v === "number") return v;
+  if (!v || typeof v !== "object" || !(v.unit in UNIT_MINUTES)) return null;
+  const n = Number(v.n);
+  return Number.isFinite(n) ? n * UNIT_MINUTES[v.unit] : null;
+}
+
+/** The settings in force: each stored value over DEFAULTS. Unset or invalid values use the default. */
+export function readSettings(get) {
+  const inRange = (v, d, { min, max }) => (typeof v === "number" && v >= min && v <= max ? v : d);
   const bool = (v, d) => (typeof v === "boolean" ? v : d);
   const hex = (v, d) => (typeof v === "string" && HEX.test(v) ? v : d);
-  const config = {
-    ttlMinutes: num(c.ttlMinutes, DEFAULTS.ttlMinutes, 1, 600),
-    minTokens: num(c.minTokens, DEFAULTS.minTokens, 0, 10_000_000),
-    toast: bool(c.toast, DEFAULTS.toast),
-    toastSeconds: num(c.toastSeconds, DEFAULTS.toastSeconds, 1, 120),
+  return {
+    ttlMinutes: inRange(durationMinutes(get(KEYS.ttl)), DEFAULTS.ttlMinutes, LIMITS.ttlMinutes),
+    minTokens: inRange(get(KEYS.minTokens), DEFAULTS.minTokens, LIMITS.minTokens),
+    toast: bool(get(KEYS.toast), DEFAULTS.toast),
+    toastSeconds: inRange(get(KEYS.toastSeconds), DEFAULTS.toastSeconds, LIMITS.toastSeconds),
     circle: {
-      enabled: bool(circle.enabled, DEFAULTS.circle.enabled),
-      hot: hex(circle.hot, DEFAULTS.circle.hot),
-      cold: hex(circle.cold, DEFAULTS.circle.cold),
+      enabled: bool(get(KEYS.circles), DEFAULTS.circle.enabled),
+      hot: hex(get(KEYS.hot), DEFAULTS.circle.hot),
+      cold: hex(get(KEYS.cold), DEFAULTS.circle.cold),
     },
   };
-  return { config, problem: null };
+}
+
+/** A stepped number kept inside its limits. */
+export function stepped(value, delta, { min, max }) {
+  return Math.min(max, Math.max(min, value + delta));
 }
 
 /** The newest assistant turn in a transcript tail: { at: ms, tokens } or null. */

@@ -15,19 +15,21 @@ Herdr runs a mod only while its block is in the layout, so the strip is what kee
 
 If you remove the block, the circles stop cooling and the toast stops.
 
-Settings live in `mods/cache-expiry/config.json`, re-read every minute:
+## Settings
 
-| Key | Default | Meaning |
+Click the strip (it says **Settings** on the right) to open the settings dialog, or run **Cache expiry settings** from the command palette. Every change applies at once.
+
+| Setting | Default | What it does |
 | --- | --- | --- |
-| `ttlMinutes` | `55` | Idle time at which the cache counts as cold. The circle is fully cold here. |
-| `minTokens` | `80000` | Below this context size no toast and no cold mark. |
-| `toast` | `true` | Post the toast when you focus a cold conversation. |
-| `toastSeconds` | `12` | How long the toast stays. |
-| `circle.enabled` | `true` | Tint idle and done circles. |
-| `circle.hot` | `#ff6b35` | Colour of a freshly used cache. `#rgb` or `#rrggbb`. |
-| `circle.cold` | `#4a9eff` | Colour once the cache has expired. |
+| Cooling circles | on | Idle and done circles in Agent Brief cool from hot to cold. Off keeps the status colours. |
+| Hot colour | Orange | A cache that was just used. |
+| Cold colour | Blue | A cache that has expired. |
+| Cold after | 55 min | Idle time after which the cache counts as expired. Claude's prompt cache lasts one hour. |
+| Toast on a cold tab | on | When you switch to a cold Claude tab, one toast names its space and tab. |
+| Toast stays | 12 s | How long the toast stays. |
+| Warn from | 80k tokens | Smaller conversations get no toast and no cold mark. |
 
-A value that fails validation falls back to its default, and a file that is not valid JSON falls back to all defaults with one warning toast.
+The same settings are declared in `mod.json`, so a Settings screen with a Mods page lists them too. Values are stored with `setShared` under `cache-expiry.*`; **Reset to defaults** clears them.
 
 The mod reads the local transcript that `herdr-hook.sh` records for each terminal in `~/.local/state/herdr-idle/<terminal>`, using `tail`. Without that hook state there is nothing to cool, and the mod does nothing.
 
