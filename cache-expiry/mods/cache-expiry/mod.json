@@ -3,7 +3,7 @@
   "size": 26,
   "title": "Cache expiry",
   "icon": "mdi-cog-outline",
-  "overlay": { "kind": "dialog", "width": 680, "height": 700 },
+  "overlay": { "kind": "dialog", "width": 680, "height": 740 },
   "palette": [
     { "title": "Cache sessions", "command": "mod.open", "args": { "name": "cache-expiry" }, "words": "claude codex prompt cache cold ttl toast circles sessions clear settings" }
   ],

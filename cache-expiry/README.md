@@ -1,5 +1,34 @@
 # Cache Expiry
 
+See every Claude Code and Codex session in [Herdr Desktop](https://github.com/herdrdev/herdr-app) by prompt-cache temperature and context size, and act on it: compact, save a handover, clear, and apply the handover to the fresh conversation.
+
+![Sessions list: each session's cache temperature, context size, and Compact, Handover, Clear and Apply buttons](screenshots/sessions.png)
+
+| Toolbar dot (focused tab) | Settings |
+| --- | --- |
+| ![Cache icon with the focused tab's cache colour](screenshots/toolbar.png) | ![Settings tab](screenshots/settings.png) |
+
+## Install
+
+Requires macOS, Herdr Desktop with `hc` on your PATH, and Python 3 for the optional Codex reader.
+
+1. Copy the mod into Herdr's app home:
+   ```sh
+   git clone https://github.com/oleg-koval/herdr-mods.git
+   cp -R herdr-mods/cache-expiry/mods/cache-expiry ~/.config/herdr-app/mods/
+   ```
+2. Register the Claude hook. It labels each terminal with its conversation and records the transcript path the mod reads. Add it to `~/.claude/settings.json` under both `SessionStart` and `UserPromptSubmit`:
+   ```json
+   { "hooks": [{ "type": "command", "command": "bash \"$HOME/.config/herdr-app/mods/cache-expiry/claude-hook.sh\"" }] }
+   ```
+   It needs `jq`, does nothing outside Herdr terminals, and never blocks.
+3. Optional, for Codex: register `codex-cache-hook.py` as described under [Codex cache hits](#codex-cache-hits).
+4. Restart running Claude sessions (or send them one prompt) so the hook labels them. Click the cache icon in the toolbar.
+
+Herdr mods run with your account's privileges. Read the files before installing.
+
+## How it works
+
 Tells you when a Claude terminal's prompt cache has gone cold. Each Claude agent's status circle cools from hot to cold as its cache ages, so you can see at a glance which conversations will be rewritten at the cache-write price on the next prompt. Switching to a cold conversation posts one toast that names its space and tab.
 
 Copy [mods/cache-expiry](mods/cache-expiry/) into Herdr's `mods/` directory. It publishes the circle colours that [Agent Brief](../agent-brief/RECIPE.md) draws, posts the toast, and shows a cache icon with a status dot. The dot is the focused tab's own cache: its colour runs from your hot colour to your cold colour as that Claude conversation idles, or with the Codex cache-hit rate (100% hot, 0% cold). It is muted when the focused tab has no Claude or Codex session or no sample yet. Hover for this tab's state plus the totals over every tracked cache.
@@ -30,7 +59,7 @@ Each row shows the context the session's newest request carried (`258k ctx`): fo
 Two buttons sit either side of **Clear**:
 
 - **Save handover** (down arrow) asks the session to write its context and leftover tasks to `~/.local/state/herdr-handover/<terminal>.md`: goal, state with receipts, decisions, a task checklist and the next step. It lights up while the file is being written and once it is saved. Saving again replaces it.
-- **Apply handover** (play) stays grey until both are true: the handover file exists, and the conversation was cleared after it was asked for. Cleared means the conversation id on the terminal changed (`claude.session`, set by `herdr-hook.sh` on SessionStart; `codex.cache.session` from the Codex hook), or this dialog's Clear was used. Applying moves the file to `applied/<terminal>-<time>.md` and tells the fresh session to read it and carry on from its next step.
+- **Apply handover** (play) stays grey until both are true: the handover file exists, and the conversation was cleared after it was asked for. Cleared means the conversation id on the terminal changed (`claude.session`, set by `claude-hook.sh` on SessionStart; `codex.cache.session` from the Codex hook), or this dialog's Clear was used. Applying moves the file to `applied/<terminal>-<time>.md` and tells the fresh session to read it and carry on from its next step.
 
 A `<terminal>.json` beside each handover records when it was asked for and which conversation asked. Text goes to the session with `hc send`, run without `HC_TERMINAL_ID` so hc does not wrap it in `<hc from=...>` tags (a wrapped `/clear` reads as a message, not a command).
 
