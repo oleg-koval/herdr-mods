@@ -3,8 +3,8 @@
 // read by agent-brief), posts one toast, naming the space and tab, when you switch to a cold
 // conversation before you type, and draws a cache indicator whose dot is the focused tab's cache.
 // Its layout block keeps it running. Clicking the indicator opens this mod again as a dialog
-// (mod.open): every Claude and Codex session by temperature, each with Handover, Clear and Apply
-// buttons, and the settings. That copy only draws. The same settings are listed in Settings > Mods.
+// (mod.open): every Claude and Codex session by temperature and context size, each with Compact,
+// Handover, Clear and Apply buttons, and the settings. That copy only draws. The same settings are listed in Settings > Mods.
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
@@ -14,7 +14,7 @@ import {
   lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText,
 } from "./cold.js";
 import { codexSamples, codexStripText, hitRate } from "./codex.js";
-import { sessionRows, rowsSummary } from "./sessions.js";
+import { sessionRows, rowsSummary, kTokens } from "./sessions.js";
 import { SHARED_KEY as HANDOVER_KEY } from "./handover.js";
 import { send, scanHandovers, requestHandover, markCleared, applyHandover } from "./handover-io.js";
 
@@ -24,6 +24,8 @@ const conf = () => readSettings((key) => shared(key));
 const HOT = [["#ff6b35", "Orange"], ["#ef4444", "Red"], ["#f59e0b", "Amber"], ["#ec4899", "Pink"]];
 const COLD = [["#4a9eff", "Blue"], ["#22d3ee", "Cyan"], ["#a78bfa", "Violet"], ["#8b949e", "Grey"]];
 const DANGER = "#dc2626";
+const COMPACT = "#f59e0b";
+const COMPACT_BG = "#f59e0b26";
 
 export default class CacheExpiry extends View {
   init(_props, cx) {
@@ -186,7 +188,7 @@ export default class CacheExpiry extends View {
     }
     this.codex = codexSamples(agents(), terminals(), this.localCodex);
     for (const [address, { input, cached }] of Object.entries(this.codex.samples)) {
-      heat[address] = { codexHit: hitRate(cached, input) };
+      heat[address] = { codexHit: hitRate(cached, input), tokens: input };
     }
     // every mod re-renders on a set, so only publish when something the drawing shows has changed
     const text = JSON.stringify(heat);
@@ -235,7 +237,7 @@ export default class CacheExpiry extends View {
 
   rows(c) {
     return sessionRows(agents(), shared("cache-expiry.heat") ?? {}, Date.now(),
-      { ttlMinutes: c.ttlMinutes, hot: c.circle.hot, cold: c.circle.cold });
+      { ttlMinutes: c.ttlMinutes, hot: c.circle.hot, cold: c.circle.cold, compactTokens: c.compactTokens });
   }
 
   // The dot is the focused tab's own cache; the tooltip adds the totals over every session.
@@ -297,10 +299,13 @@ export default class CacheExpiry extends View {
         .child(div().size(10).flex_none().rounded_full().bg(r.color ?? t.muted))
         .child(v_flex().flex_1().min_w(0).gap(1)
           .child(div().text_size(13).truncate().child(r.where))
-          .child(div().text_size(11.5).text_color(t.dim).truncate().child(`${r.app} · ${r.detail}`))))
+          .child(h_flex().gap(6).items_center().min_w(0)
+            .when(r.context !== null, (el) => el.child(this.contextPill(t, r)))
+            .child(div().flex_1().min_w(0).text_size(11.5).text_color(t.dim).truncate().child(`${r.app} · ${r.detail}`)))))
       .child(div().flex_none().w(48).h(6).rounded(3).bg(t.hover).overflow_hidden()
         .child(div().h_full().rounded(3).w(Math.round(48 * fill)).bg(r.color ?? t.muted)))
       .child(h_flex().flex_none().gap(4).items_center()
+        .child(this.compactButton(t, r))
         .child(this.handoverButton(t, r, h))
         .child(this.clearButton(t, r, this.armed === r.address))
         .child(this.applyButton(t, r, h)));
@@ -314,6 +319,26 @@ export default class CacheExpiry extends View {
         .text_color(lit ? t.accent : t.foreground).hover((s) => s.bg(t.hover)).on_click(onClick))
       .when(!enabled && lit, (el) => el.opacity(0.8).text_color(t.accent))
       .child(svg(`mods/cache-expiry/icons/${icon}.svg`).size(14));
+  }
+
+  // The context the newest request carried; amber from the Compact threshold on.
+  contextPill(t, r) {
+    return div().id(`ce-ctx-${r.address}`).flex_none().px(5).rounded(4).text_size(11)
+      .bg(r.large ? COMPACT_BG : t.hover).text_color(r.large ? COMPACT : t.muted)
+      .tooltip(`${r.context.toLocaleString("en-US")} tokens of context on the last request`)
+      .child(`${kTokens(r.context)} ctx`);
+  }
+
+  // Grey until the context passes the Compact threshold; /compact summarises the conversation in place.
+  compactButton(t, r) {
+    const { compactTokens } = conf();
+    const tip = !r.large ? `Compact: available from ${kTokens(compactTokens)} of context`
+      : !r.clearable ? `Busy (${r.status}): compact once it is idle`
+      : `Compact ${kTokens(r.context)} of context (/compact)`;
+    return this.iconButton(t, `ce-compact-${r.address}`, "compact", {
+      enabled: r.large && r.clearable, lit: r.large, tip,
+      onClick: (_e, cx) => { this.armed = null; this.act(r, "compact", () => send(r.address, "/compact")); cx.notify(); },
+    });
   }
 
   // Asks the session to write its context and leftover tasks to a file for the next session.
@@ -342,11 +367,12 @@ export default class CacheExpiry extends View {
   }
 
   act(r, what, task) {
-    const verb = { handover: "handover requested", apply: "handover applied", clear: "cleared" }[what];
+    const verb = { handover: "handover requested", apply: "handover applied", clear: "cleared", compact: "compacting" }[what];
     const body = {
       handover: (path) => `It is writing ${path}. Clear it once that is done, then press play.`,
       apply: (path) => `Sent ${path} to the fresh session.`,
       clear: () => `Sent ${r.clear}. Its next prompt starts from an empty context.`,
+      compact: () => `Sent /compact to ${kTokens(r.context)} of context.`,
     }[what];
     task().then(
       (result) => notify({ title: `${r.where}: ${verb}`, body: body(result), level: "info", timeout: 6000 }),
@@ -389,6 +415,7 @@ export default class CacheExpiry extends View {
     const ttl = (c) => c.ttlMinutes;
     const toastSeconds = (c) => c.toastSeconds;
     const minTokens = (c) => c.minTokens;
+    const compactTokens = (c) => c.compactTokens;
     return v_flex().flex_1().min_h(0).px(20).pb(20).gap(2)
       .child(div().pb(8).text_size(12.5).text_color(t.dim).child("Claude cache expiry and observed Codex cache hits."))
       .child(this.gradient(t, c))
@@ -410,6 +437,10 @@ export default class CacheExpiry extends View {
         this.stepper(t, "ce-min-tokens", `${Math.round(c.minTokens / 1000)}k tokens`,
           step(KEYS.minTokens, minTokens, -1, LIMITS.minTokens),
           step(KEYS.minTokens, minTokens, 1, LIMITS.minTokens))))
+      .child(this.row(t, "Compact from", "Sessions with more context get a Compact button.",
+        this.stepper(t, "ce-compact-tokens", `${kTokens(c.compactTokens)} tokens`,
+          step(KEYS.compactTokens, compactTokens, -1, LIMITS.compactTokens),
+          step(KEYS.compactTokens, compactTokens, 1, LIMITS.compactTokens))))
       .child(div().flex_1().min_h(0))
       .child(h_flex().gap(8).justify_end().pt(12)
         .child(this.button(t, "ce-reset", "Reset to defaults", () => Object.values(KEYS).forEach((key) => setShared(key, null))))

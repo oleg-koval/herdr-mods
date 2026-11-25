@@ -4,7 +4,7 @@
 import { heatOf, mixHex } from "./cold.js";
 
 const APPS = { "claude-code": "Claude", codex: "Codex" };
-// Codex starts a new conversation with /new; Claude with /clear.
+// Codex starts a new conversation with /new; Claude with /clear. Both compact with /compact.
 const CLEAR = { "claude-code": "/clear", codex: "/new" };
 const CLEARABLE = new Set(["idle", "done"]);
 
@@ -19,23 +19,26 @@ function claudeRow(h, now, ttlMs) {
   if (typeof h?.at !== "number") return { temp: null, detail: "no turn recorded yet" };
   const temp = heatOf({ at: h.at }, now, ttlMs);
   const idleMin = Math.floor((now - h.at) / 60_000);
-  const tokens = typeof h.tokens === "number" ? ` · ${Math.round(h.tokens / 1000)}k tokens` : "";
   const left = Math.ceil((ttlMs - (now - h.at)) / 60_000);
-  const state = temp < 1 ? `warm · cold in ${idleText(left)}` : `cold · idle ${idleText(idleMin)}`;
-  return { temp, detail: state + tokens };
+  return { temp, detail: temp < 1 ? `warm · cold in ${idleText(left)}` : `cold · idle ${idleText(idleMin)}` };
 }
 
 function codexRow(h) {
   if (typeof h?.codexHit !== "number") return { temp: null, detail: "no cache sample yet" };
-  return { temp: 1 - h.codexHit / 100, detail: `${h.codexHit}% of input cached on the last request` };
+  return { temp: 1 - h.codexHit / 100, detail: `${h.codexHit}% cached on the last request` };
 }
 
+/** "246k" */
+export const kTokens = (n) => `${Math.round(n / 1000)}k`;
+
 /** Rows for every Claude and Codex agent, hottest first; agents without a sample go last. */
-export function sessionRows(agents, heat, now, { ttlMinutes, hot, cold }) {
+export function sessionRows(agents, heat, now, { ttlMinutes, hot, cold, compactTokens = Infinity }) {
   const ttlMs = ttlMinutes * 60_000;
   const rows = agents.filter((a) => a.app in APPS).map((a) => {
     const h = heat?.[a.address];
     const { temp, detail } = a.app === "codex" ? codexRow(h) : claudeRow(h, now, ttlMs);
+    // Context: the input of the newest request (Claude: input + cache reads + cache writes).
+    const context = typeof h?.tokens === "number" ? h.tokens : null;
     return {
       address: a.address,
       app: APPS[a.app],
@@ -47,6 +50,8 @@ export function sessionRows(agents, heat, now, { ttlMinutes, hot, cold }) {
       detail,
       clear: CLEAR[a.app],
       clearable: CLEARABLE.has(a.status),
+      context,
+      large: context !== null && context >= compactTokens,
     };
   });
   return rows.sort((a, b) => (a.temp ?? 2) - (b.temp ?? 2));

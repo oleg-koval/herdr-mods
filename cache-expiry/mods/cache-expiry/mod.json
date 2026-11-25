@@ -3,7 +3,7 @@
   "size": 26,
   "title": "Cache expiry",
   "icon": "mdi-cog-outline",
-  "overlay": { "kind": "dialog", "width": 620, "height": 700 },
+  "overlay": { "kind": "dialog", "width": 680, "height": 700 },
   "palette": [
     { "title": "Cache sessions", "command": "mod.open", "args": { "name": "cache-expiry" }, "words": "claude codex prompt cache cold ttl toast circles sessions clear settings" }
   ],
@@ -26,6 +26,7 @@
     { "key": "cache-expiry.ttl", "title": "Cold after", "about": "Idle time after which the cache counts as expired. Claude's prompt cache lasts one hour.", "type": "duration", "default": { "n": 55, "unit": "minute" }, "units": ["minute", "hour"] },
     { "key": "cache-expiry.toast", "title": "Toast on a cold tab", "about": "When you switch to a cold Claude tab, one toast names its space and tab.", "type": "boolean", "default": true },
     { "key": "cache-expiry.toastSeconds", "title": "Toast stays (seconds)", "type": "number", "default": 12, "min": 3, "max": 60, "step": 1 },
-    { "key": "cache-expiry.minTokens", "title": "Warn from (tokens)", "about": "Smaller conversations get no toast and no cold mark: rewriting them is cheap.", "type": "number", "default": 80000, "min": 0, "max": 1000000, "step": 10000 }
+    { "key": "cache-expiry.minTokens", "title": "Warn from (tokens)", "about": "Smaller conversations get no toast and no cold mark: rewriting them is cheap.", "type": "number", "default": 80000, "min": 0, "max": 1000000, "step": 10000 },
+    { "key": "cache-expiry.compactTokens", "title": "Compact from (tokens)", "about": "Conversations with more context than this get a Compact button in the sessions list.", "type": "number", "default": 200000, "min": 50000, "max": 1000000, "step": 25000 }
   ]
 }

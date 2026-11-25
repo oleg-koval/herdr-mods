@@ -21,6 +21,10 @@ Click the cache icon (or run **Cache sessions** from the command palette) to ope
 
 **Clear** starts a fresh conversation in that tab: it sends `/clear` to Claude or `/new` to Codex with `hc send`. The first click arms the button and the second (**Confirm**) sends. It is only offered while the session is idle or done, so it never lands in a running turn or answers a permission prompt. Clearing drops the conversation; it cannot be undone.
 
+## Context and Compact
+
+Each row shows the context the session's newest request carried (`258k ctx`): for Claude, input plus cache reads and writes from the transcript; for Codex, the input tokens of the last sampled request. From **Compact from** (default 200k, in Settings) the pill turns amber and the **Compact** button (arrows pointing in) lights up; it sends `/compact` to that session while it is idle or done.
+
 ## Handover
 
 Two buttons sit either side of **Clear**:
@@ -43,6 +47,7 @@ The dialog's **Settings** tab holds the settings. Every change applies at once.
 | Toast on a cold tab | on | When you switch to a cold Claude tab, one toast names its space and tab. |
 | Toast stays | 12 s | How long the toast stays. |
 | Warn from | 80k tokens | Smaller conversations get no toast and no cold mark. |
+| Compact from | 200k tokens | Sessions with more context get a Compact button in the sessions list. |
 
 The same settings are declared in `mod.json`, so a Settings screen with a Mods page lists them too. Values are stored with `setShared` under `cache-expiry.*`; **Reset to defaults** clears them. An older install's `config.json` is imported once on first run; anything already set in the dialog wins.
 
