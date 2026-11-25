@@ -8,6 +8,14 @@ export const VIEWS = ["needs", "all", "repos", "runs"];
 // progress can be found without scanning All PRs.
 export const VIEW_LABEL = { needs: "Needs you", all: "All PRs", repos: "Repos", runs: "Runs", running: "Reviewing now" };
 
+// Tab / Shift-Tab order. From a view outside the sidebar (Reviewing now), Tab goes to the first
+// sidebar view and Shift-Tab to the last, as if it sat just past the end of the list.
+export function nextView(view, step) {
+  const at = VIEWS.indexOf(view);
+  const from = at >= 0 ? at : step > 0 ? -1 : VIEWS.length;
+  return VIEWS[(from + step + VIEWS.length) % VIEWS.length];
+}
+
 // What the old panel's "Needs you" card counted: a person has to act.
 export const NEEDS_YOU = new Set(["HUMAN_NEEDED", "FAILED", "COLLISION", "NEW_COMMITS_SINCE_YOUR_REVIEW"]);
 

@@ -9,7 +9,7 @@ import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { checking, closeOverlay, exec, home, nextCommand, props, settings, theme } from "herdr";
 import {
   PR_ID_RE, REPO_RE, VIEWS, VIEW_LABEL, actionsFor, age, clampIndex, cli, countdown, failedCount,
-  filterRows, miniStatus, money, pageOf, paginate, prUrl,
+  filterRows, miniStatus, money, nextView, pageOf, paginate, prUrl,
   pullsUrl, queuedCount, reviewPathOk, shortRepo, statusMeta, viewCount, viewRows,
 } from "./rules.js";
 import { engineBin, makeEngine } from "./engine.js";
@@ -166,7 +166,7 @@ export default class PrReview extends View {
   }
 
   cycleView(step, cx) {
-    this.setView(VIEWS[(VIEWS.indexOf(this.view) + step + VIEWS.length) % VIEWS.length], cx);
+    this.setView(nextView(this.view, step), cx);
   }
 
   key(e, cx) {

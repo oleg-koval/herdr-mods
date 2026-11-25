@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   NEEDS_YOU, actionsFor, age, clampIndex, cli, countdown, failedCount, filterRows, matches, money, needsCount,
   pageOf, paginate, parseSnapshot, prUrl, pullsUrl, shortRepo, statusMeta, viewCount, viewRows,
-  findTab, miniStatus, panelPath, reviewPathOk, VIEWS, VIEW_LABEL,
+  findTab, miniStatus, panelPath, reviewPathOk, VIEWS, VIEW_LABEL, nextView,
 } from "./rules.js";
 
 const pr = (n, status, extra = {}) => ({
@@ -175,4 +175,11 @@ test("running view lists only reviews in progress, outside the sidebar views", (
   assert.equal(viewRows(snap(), "running").length, 0);
   assert.equal(VIEWS.includes("running"), false);
   assert.equal(VIEW_LABEL.running, "Reviewing now");
+});
+
+test("nextView cycles the sidebar, and leaves Reviewing now at the list's ends", () => {
+  assert.equal(nextView("needs", 1), "all");
+  assert.equal(nextView("needs", -1), "runs");
+  assert.equal(nextView("running", 1), "needs");
+  assert.equal(nextView("running", -1), "runs");
 });
