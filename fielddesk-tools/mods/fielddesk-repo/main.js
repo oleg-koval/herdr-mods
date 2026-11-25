@@ -63,14 +63,14 @@ export default class RepositoryStrip extends View {
       .child(div().flex_none().text_color(t.accent).child("Fielddesk"))
       .child(div().flex_1().min_w(0).truncate().text_color(t.muted)
         .child([project, pane?.branch, space?.machine ?? (space ? "Local" : null)].filter(Boolean).join("  /  ")))
-      .child(h_flex().id("fielddesk-jev-status").role("status").accessibility_label(jevTooltip).tooltip(jevTooltip)
-        .size(24).flex_none().items_center().justify_center()
-        .child(div().size(8).rounded_full().bg(t[jevColor] ?? jevColor)))
       .when(Boolean(space && folder), (el) => el.child(action(t, "new-task", "folder-plus", "New task", () => this.openTask())))
       .when(Boolean(folder), (el) => el.child(action(t, "copy-folder", "files", "Copy path", (_e, cx) => {
         cx.write_to_clipboard(folder);
         notify({ title: "Folder path copied", level: "info", timeout: 2200 });
       })))
-      .child(action(t, "rail-toggle", "panel-right", "Toggle desk panel", () => run("layout.toggle", { id: "fielddesk-rail" })));
+      .child(action(t, "rail-toggle", "panel-right", "Toggle desk panel", () => run("layout.toggle", { id: "fielddesk-rail" })))
+      .child(h_flex().id("fielddesk-jev-status").role("status").accessibility_label(jevTooltip).tooltip(jevTooltip)
+        .size(24).flex_none().items_center().justify_center()
+        .child(div().size(8).rounded_full().bg(t[jevColor] ?? jevColor)));
   }
 }

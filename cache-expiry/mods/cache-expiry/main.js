@@ -1,12 +1,11 @@
 // Cache expiry: when a Claude conversation's prompt cache goes cold. It publishes, for every Claude
 // agent, a circle colour that cools from hot to cold as the cache ages (shared("cache-expiry.heat"),
 // read by agent-brief), posts one toast, naming the space and tab, when you switch to a cold
-// conversation before you type, and draws a one-line summary strip. Herdr runs a mod copy only
-// while its block is in the layout, so the strip is what keeps this mod alive.
-// Clicking the strip opens this mod again as its settings dialog (mod.open); that copy only draws
+// conversation before you type, and draws a cache indicator. Its layout block keeps it running.
+// Clicking the indicator opens this mod again as its settings dialog (mod.open); that copy only draws
 // the settings. The same settings are listed in Settings > Mods.
 
-import { View, div } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, focused, exec, home, appHome, readTextFile, notify, shared, setShared, checking, terminals, theme, props, run, closeOverlay } from "herdr";
 import {
@@ -31,15 +30,42 @@ export default class CacheExpiry extends View {
     this.warned = {};
     this.published = "";
     this.codex = { count: 0, samples: {} };
+    this.localCodex = {};
+    this.readingCodex = false;
     this.lastFocus = null;
     this.lastSettings = JSON.stringify(conf());
     if (this.overlay || checking()) return;
     cx.spawn(async () => this.importLegacyConfig());
     this.scan(cx);
+    this.scanCodex(cx);
     cx.timer.every(60_000, (cx) => this.scan(cx));
+    cx.timer.every(15_000, (cx) => this.scanCodex(cx));
     cx.timer.every(5_000, (cx) => this.tick(cx));
     cx.timer.every(1_500, (cx) => this.watchFocus(cx));
     cx.timer.every(500, () => this.watchSettings());
+  }
+
+  scanCodex(cx) {
+    if (this.readingCodex) return;
+    const { samples } = codexSamples(agents(), terminals());
+    const addresses = agents().filter((a) => a.app === "codex" && /^t[a-z0-9]{1,32}$/.test(a.address) &&
+      !samples[a.address]).map((a) => a.address);
+    if (!addresses.length && !Object.keys(this.localCodex).length) return;
+    this.readingCodex = true;
+    cx.spawn(async (cx) => {
+      try {
+        const result = addresses.length ? await exec("python3", [
+          `${appHome()}/mods/cache-expiry/codex-cache-read.py`, ...addresses,
+        ], { timeout: 5_000 }) : null;
+        this.localCodex = result?.code === 0 ? JSON.parse(result.stdout) : {};
+      } catch {
+        this.localCodex = {};
+      } finally {
+        this.readingCodex = false;
+      }
+      this.publish();
+      cx.notify();
+    });
   }
 
   // Before the settings dialog, settings lived in config.json beside this file. Import what an
@@ -129,7 +155,7 @@ export default class CacheExpiry extends View {
         idleMin: Math.floor((now - u.at) / 60_000),
       };
     }
-    this.codex = codexSamples(agents(), terminals());
+    this.codex = codexSamples(agents(), terminals(), this.localCodex);
     for (const [address, { input, cached }] of Object.entries(this.codex.samples)) {
       heat[address] = { codexHit: hitRate(cached, input) };
     }
@@ -174,20 +200,24 @@ export default class CacheExpiry extends View {
   }
 
   render() {
-    return this.overlay ? this.settingsDialog(theme(), conf()) : this.strip(theme(), conf());
+    return this.overlay ? this.settingsDialog(theme(), conf()) : this.indicator(theme(), conf());
   }
 
-  strip(t, c) {
+  indicator(t, c) {
     const s = summarize(this.reads.usage, Date.now(), c.ttlMinutes * 60_000);
-    const dot = s.cold + s.warm === 0 ? t.muted : s.cold ? c.circle.cold : c.circle.hot;
-    const summary = [stripText(s), codexStripText(this.codex)].filter(Boolean).join("  /  ");
-    return h_flex().id("cache-expiry-strip").size_full().px(10).gap(6).items_center().bg(t.chrome)
-      .text_size(11.5).text_color(t.muted).cursor_pointer()
-      .hover((st) => st.bg(t.hover))
-      .on_click(() => run("mod.open", { name: "cache-expiry" }))
-      .child(div().w(8).h(8).rounded(4).flex_none().bg(dot))
-      .child(div().flex_1().truncate().child(summary))
-      .child(div().flex_none().text_color(t.dim).child("Settings"));
+    const count = Object.keys(this.codex.samples).length;
+    const dot = s.cold ? c.circle.cold : s.warm || count ? "#16a34a" : t.muted;
+    const tooltip = [stripText(s), codexStripText(this.codex)].filter(Boolean).join(" / ");
+    const toolbar = Boolean(props()?.toolbar);
+    return h_flex().size_full().items_center().bg(t.chrome)
+      .when(toolbar, (el) => el.justify_center().border_b(1).border_color(t.border))
+      .when(!toolbar, (el) => el.justify_end().pr(10))
+      .child(h_flex().id("cache-expiry-status").role("button").accessibility_label(`Cache settings. ${tooltip}`)
+        .tooltip(tooltip).h(24).px(6).gap(5).items_center().rounded(4)
+        .text_color(t.muted).hover((st) => st.bg(t.hover).text_color(t.foreground)).cursor_pointer()
+        .on_click(() => run("mod.open", { name: "cache-expiry" }))
+        .child(svg("mods/workspace-chrome/layers.svg").size(16))
+        .child(div().size(8).rounded_full().bg(dot)));
   }
 
   settingsDialog(t, c) {

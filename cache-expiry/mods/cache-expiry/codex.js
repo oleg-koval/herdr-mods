@@ -1,8 +1,10 @@
-export function codexSamples(agents, terminals) {
+export function codexSamples(agents, terminals, localSamples = {}) {
   const labels = Object.fromEntries(terminals.map((terminal) => [terminal.address, terminal.labels]));
   const codex = agents.filter((agent) => agent.app === "codex");
   const samples = {};
   for (const { address } of codex) {
+    const local = localSamples[address];
+    if (local) samples[address] = local;
     const session = labels[address]?.["codex.cache.session"];
     const report = labels[address]?.["codex.cache.usage"];
     if (typeof session !== "string" || !session || typeof report !== "string") continue;

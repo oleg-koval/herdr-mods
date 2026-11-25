@@ -2,9 +2,9 @@
 
 Tells you when a Claude terminal's prompt cache has gone cold. Each Claude agent's status circle cools from hot to cold as its cache ages, so you can see at a glance which conversations will be rewritten at the cache-write price on the next prompt. Switching to a cold conversation posts one toast that names its space and tab.
 
-Copy [mods/cache-expiry](mods/cache-expiry/) into Herdr's `mods/` directory. It publishes the circle colours that [Agent Brief](../agent-brief/RECIPE.md) draws, posts the toast, and shows a one-line strip: `Claude cache: 1 cold · 2 warm · next cold in 5m`.
+Copy [mods/cache-expiry](mods/cache-expiry/) into Herdr's `mods/` directory. It publishes the circle colours that [Agent Brief](../agent-brief/RECIPE.md) draws, posts the toast, and shows a cache icon with a status dot. Hover for the tracked Claude caches and the Codex hit rate. The dot is green when usage is available, muted when no sample is available, or uses your cold colour when any tracked Claude cache has expired.
 
-Herdr runs a mod only while its block is in the layout, so the strip is what keeps it working. The first time Herdr sees the folder it docks the strip at the bottom of the shown layout. Move it anywhere you like, for example under Agent Brief:
+Herdr runs a mod only while its block is in the layout, so the indicator keeps it working. The first time Herdr sees the folder it docks the indicator at the bottom of the shown layout. Move it anywhere you like, for example under Agent Brief:
 
 ```json
 { "type": "column", "size": { "px": 300 }, "children": [
@@ -17,7 +17,7 @@ If you remove the block, the circles stop cooling and the toast stops.
 
 ## Settings
 
-Click the strip (it says **Settings** on the right) to open the settings dialog, or run **Cache expiry settings** from the command palette. Every change applies at once.
+Click the cache icon to open the settings dialog, or run **Cache expiry settings** from the command palette. Every change applies at once.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -35,7 +35,9 @@ The mod reads the local transcript that `herdr-hook.sh` records for each termina
 
 ## Codex cache hits
 
-The strip shows how many Codex sessions have reported usage and their aggregate cache-hit percentage. Agent Brief shows each sampled session's percentage. These percentages measure cached input tokens from the last reported request per session. A zero-hit request shows 0%, and missing reports stay unsampled. Codex does not report an expiry time, so the Claude expiry colours and alerts apply only to Claude.
+The tooltip shows how many Codex sessions have reported usage and their aggregate cache-hit percentage. Agent Brief shows each sampled session's percentage. These percentages measure cached input tokens from the last reported request per session. A zero-hit request shows 0%. Codex expiry timing is unavailable, so the expiry colours and alerts apply only to Claude.
+
+On macOS, the mod can read the last token counters from a local Codex session in `~/.codex/sessions` while its foreground process holds exactly one matching rollout open. Only the two counts are returned to Herdr. Detached, remote, and unmatched sessions stay unsampled until a hook report arrives.
 
 Register the installed `codex-cache-hook.py` with Codex under both `SessionStart` and `PostModelRequest`. Use a Codex CLI with `PostModelRequest` support, Python 3, and `hc` on the terminal's PATH. For each event, add a group like this inside `hooks` in `~/.codex/hooks.json`. Substitute the actual Herdr app directory if yours differs:
 
@@ -45,4 +47,4 @@ Register the installed `codex-cache-hook.py` with Codex under both `SessionStart
 
 Review the hook entries in Codex with `/hooks`, then start or resume Codex in Herdr. The hook writes only the session ID and numeric usage to Herdr terminal labels. It does not read prompts or transcripts or make network requests.
 
-Verify that a Claude terminal still cools as before and that a completed Codex request adds a percentage to Agent Brief and updates the strip. Run `npm test` and `python3 -B -m unittest discover -s cache-expiry/tests` for the logic and hook checks.
+Verify that a Claude terminal still cools as before and that a completed Codex request adds a percentage to Agent Brief and updates the tooltip. Run `npm test` and `python3 -B -m unittest discover -s cache-expiry/tests` for the logic and hook checks.
