@@ -28,3 +28,11 @@ test("the strip aggregates tokens, leaves missing usage unknown and hides withou
   assert.equal(codexStripText({ count: 1, samples: {} }), "Codex: 0/1 sampled");
   assert.equal(codexStripText({ count: 0, samples: {} }), "");
 });
+
+test("local samples fill missing reports and a valid hook report takes priority", () => {
+  const agents = [agent("t1"), agent("t2"), agent("t3", "claude-code")];
+  const local = { t1: { input: 100, cached: 1 }, t2: { input: 50, cached: 25 }, t3: { input: 30, cached: 15 } };
+  assert.deepEqual(codexSamples(agents, [terminal("t1", "abc", "abc:100:0")], local), {
+    count: 2, samples: { t1: { input: 100, cached: 0 }, t2: { input: 50, cached: 25 } },
+  });
+});

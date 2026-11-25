@@ -5,7 +5,7 @@
   "icon": "mdi-cog-outline",
   "overlay": { "kind": "dialog", "width": 520, "height": 680 },
   "palette": [
-    { "title": "Cache expiry settings", "command": "mod.open", "args": { "name": "cache-expiry" }, "words": "claude prompt cache cold ttl toast circles" }
+    { "title": "Cache expiry settings", "command": "mod.open", "args": { "name": "cache-expiry" }, "words": "claude codex prompt cache cold ttl toast circles" }
   ],
   "settings": [
     { "key": "cache-expiry.circles", "title": "Cooling circles", "about": "Idle and done Claude circles in Agent Brief cool from hot to cold as the prompt cache ages.", "type": "boolean", "default": true },
