@@ -1,0 +1,24 @@
+{
+  "before": "7941a96a0bad5e097163ef5075ad5b3f6a78dcf4",
+  "after": "0f07798ebfd665157fb21117d041fbeec328b69b",
+  "parts": [
+    {
+      "name": "Toolbar dot for the focused tab",
+      "desktop_before": "toolbar-before.png",
+      "desktop_after": "toolbar-after.png",
+      "mobile_applicable": false
+    },
+    {
+      "name": "Cache dialog Sessions tab",
+      "desktop_before": "dialog-before.png",
+      "desktop_after": "dialog-after.png",
+      "mobile_applicable": false
+    },
+    {
+      "name": "Cache dialog Settings tab",
+      "desktop_before": "dialog-before.png",
+      "desktop_after": "settings-after.png",
+      "mobile_applicable": false
+    }
+  ]
+}
