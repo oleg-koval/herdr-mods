@@ -4,8 +4,13 @@ import { checking, exec, focused, layout, nextCommand, notify, openOverlay, pane
 import { checkJevDashboard } from "./jev.js";
 import { hasPanel, panelShows } from "./panel.js";
 
-// The tab bar only has Files and Changes buttons, so a pull-request block added to the side
-// panel ("prs" in the "panel-body" stack) gets its button here.
+// The tab bar only has Files and Changes buttons, so these side-panel blocks (children of the
+// "panel-body" stack) get their buttons here, each shown only when the layout has that block.
+const PANEL_BUTTONS = [
+  { child: "prs", icon: "git-compare", label: "Pull requests" },
+  { child: "review", icon: "circle-check", label: "Review queue" },
+];
+
 function togglePanel(child) {
   if (panelShows(layout(), child)) return run("layout.hide", { id: "panel" });
   run("layout.select", { stack: "panel-body", child });
@@ -77,7 +82,8 @@ export default class RepositoryStrip extends View {
         cx.write_to_clipboard(folder);
         notify({ title: "Folder path copied", level: "info", timeout: 2200 });
       })))
-      .when(hasPanel(layout(), "prs"), (el) => el.child(action(t, "prs", "git-compare", "Pull requests", () => togglePanel("prs"))))
+      .children(PANEL_BUTTONS.filter(({ child }) => hasPanel(layout(), child))
+        .map(({ child, icon, label }) => action(t, child, icon, label, () => togglePanel(child))))
       .child(action(t, "rail-toggle", "panel-right", "Toggle desk panel", () => run("layout.toggle", { id: "fielddesk-rail" })))
       .child(h_flex().id("fielddesk-jev-status").role("status").accessibility_label(jevTooltip).tooltip(jevTooltip)
         .size(24).flex_none().items_center().justify_center()
