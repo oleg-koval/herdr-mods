@@ -1,7 +1,16 @@
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { checking, exec, focused, nextCommand, notify, openOverlay, panes, run, spaces, theme } from "herdr";
+import { checking, exec, focused, layout, nextCommand, notify, openOverlay, panes, run, spaces, theme } from "herdr";
 import { checkJevDashboard } from "./jev.js";
+import { hasPanel, panelShows } from "./panel.js";
+
+// The tab bar only has Files and Changes buttons, so a pull-request block added to the side
+// panel ("prs" in the "panel-body" stack) gets its button here.
+function togglePanel(child) {
+  if (panelShows(layout(), child)) return run("layout.hide", { id: "panel" });
+  run("layout.select", { stack: "panel-body", child });
+  run("layout.show", { id: "panel" });
+}
 
 const jevStates = {
   checking: ["Checking", "muted"],
@@ -68,6 +77,7 @@ export default class RepositoryStrip extends View {
         cx.write_to_clipboard(folder);
         notify({ title: "Folder path copied", level: "info", timeout: 2200 });
       })))
+      .when(hasPanel(layout(), "prs"), (el) => el.child(action(t, "prs", "git-compare", "Pull requests", () => togglePanel("prs"))))
       .child(action(t, "rail-toggle", "panel-right", "Toggle desk panel", () => run("layout.toggle", { id: "fielddesk-rail" })))
       .child(h_flex().id("fielddesk-jev-status").role("status").accessibility_label(jevTooltip).tooltip(jevTooltip)
         .size(24).flex_none().items_center().justify_center()

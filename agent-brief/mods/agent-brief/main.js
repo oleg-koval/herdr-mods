@@ -5,14 +5,23 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, run, theme, shared, setAgentOrder, settings } from "herdr";
+import { agents, terminals, run, theme, shared, setAgentOrder, appHome, readTextFile } from "herdr";
+import { DEFAULT_CONTEXT_LABEL, contextLabelFrom } from "./label.js";
 
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 
 export default class AgentBrief extends View {
+  init(_props, cx) {
+    this.contextLabel = DEFAULT_CONTEXT_LABEL;
+    cx.spawn(async (cx) => {
+      this.contextLabel = contextLabelFrom(await readTextFile(`${appHome()}/settings.json`).catch(() => null));
+      cx.notify();
+    });
+  }
+
   render(_cx) {
     const t = theme();
-    const contextLabel = settings().herdr_context_label || "herdr.context";
+    const contextLabel = this.contextLabel;
     const heat = shared("cache-expiry.heat") ?? {};
     const labels = Object.fromEntries(terminals().map((x) => [x.address, x.labels ?? {}]));
     const list = [...agents()].sort((a, b) => (RANK[b.status] ?? 0) - (RANK[a.status] ?? 0) || b.seq - a.seq);
