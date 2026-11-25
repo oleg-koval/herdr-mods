@@ -3,18 +3,20 @@
 // read by agent-brief), posts one toast, naming the space and tab, when you switch to a cold
 // conversation before you type, and draws a cache indicator whose dot is the focused tab's cache.
 // Its layout block keeps it running. Clicking the indicator opens this mod again as a dialog
-// (mod.open): every Claude and Codex session by temperature, each with a Clear button, and the
-// settings. That copy only draws. The same settings are listed in Settings > Mods.
+// (mod.open): every Claude and Codex session by temperature, each with Handover, Clear and Apply
+// buttons, and the settings. That copy only draws. The same settings are listed in Settings > Mods.
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, focused, exec, hc, home, appHome, readTextFile, notify, shared, setShared, checking, terminals, theme, props, run, closeOverlay } from "herdr";
+import { agents, focused, exec, home, appHome, readTextFile, notify, shared, setShared, checking, terminals, theme, props, run, closeOverlay } from "herdr";
 import {
   KEYS, LIMITS, readSettings, stepped, legacySettings,
   lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText,
 } from "./cold.js";
 import { codexSamples, codexStripText, hitRate } from "./codex.js";
 import { sessionRows, rowsSummary } from "./sessions.js";
+import { SHARED_KEY as HANDOVER_KEY } from "./handover.js";
+import { send, scanHandovers, requestHandover, markCleared, applyHandover } from "./handover-io.js";
 
 const LEGACY_IMPORTED = "cache-expiry.legacyConfigImported";
 const isClaude = (a) => a.app === "claude-code";
@@ -38,6 +40,7 @@ export default class CacheExpiry extends View {
     this.lastFocus = null;
     this.page = "sessions";
     this.armed = null;
+    this.handing = false;
     this.lastSettings = JSON.stringify(conf());
     if (this.overlay || checking()) return;
     cx.spawn(async () => this.importLegacyConfig());
@@ -46,6 +49,7 @@ export default class CacheExpiry extends View {
     cx.timer.every(60_000, (cx) => this.scan(cx));
     cx.timer.every(15_000, (cx) => this.scanCodex(cx));
     cx.timer.every(5_000, (cx) => this.tick(cx));
+    cx.timer.every(3_000, (cx) => this.scanHandovers(cx));
     cx.timer.every(1_500, (cx) => this.watchFocus(cx));
     cx.timer.every(500, () => this.watchSettings());
   }
@@ -70,6 +74,24 @@ export default class CacheExpiry extends View {
       }
       this.publish();
       cx.notify();
+    });
+  }
+
+  // Published from this copy; the dialog copy has no timers and draws what it finds.
+  scanHandovers(cx) {
+    if (this.handing) return;
+    this.handing = true;
+    const live = agents().filter((a) => a.app === "claude-code" || a.app === "codex").map((a) => a.address);
+    cx.spawn(async (cx) => {
+      try {
+        const states = await scanHandovers(live);
+        if (JSON.stringify(states) !== JSON.stringify(shared(HANDOVER_KEY) ?? {})) {
+          setShared(HANDOVER_KEY, states);
+          cx.notify();
+        }
+      } finally {
+        this.handing = false;
+      }
     });
   }
 
@@ -259,13 +281,14 @@ export default class CacheExpiry extends View {
       .child(v_flex().id("ce-sessions").flex_1().min_h(0).gap(2).overflow_y_scrollbar()
         .children(rows.map((r) => this.sessionRow(t, r))))
       .child(div().pt(4).text_size(11.5).text_color(t.dim)
-        .child("Clear starts a fresh conversation in that tab: /clear in Claude, /new in Codex. Idle tabs only."))
+        .child("Save a handover, Clear, then play to carry the context and leftover tasks into the fresh conversation. Clear sends /clear to Claude and /new to Codex. Idle tabs only."))
       .child(h_flex().justify_end().pt(4)
         .child(this.button(t, "ce-done", "Done", () => closeOverlay(this.overlay))));
   }
 
   sessionRow(t, r) {
     const fill = r.temp === null ? 0 : Math.max(0.06, 1 - r.temp);
+    const h = (shared(HANDOVER_KEY) ?? {})[r.address] ?? null;
     return h_flex().w_full().gap(10).px(8).py(7).rounded(8).items_center()
       .when(r.focused, (el) => el.bg(t.selected))
       .child(h_flex().id(`ce-go-${r.address}`).flex_1().min_w(0).gap(10).items_center().cursor_pointer()
@@ -275,22 +298,74 @@ export default class CacheExpiry extends View {
         .child(v_flex().flex_1().min_w(0).gap(1)
           .child(div().text_size(13).truncate().child(r.where))
           .child(div().text_size(11.5).text_color(t.dim).truncate().child(`${r.app} · ${r.detail}`))))
-      .child(div().flex_none().w(64).h(6).rounded(3).bg(t.hover).overflow_hidden()
-        .child(div().h_full().rounded(3).w(Math.round(64 * fill)).bg(r.color ?? t.muted)))
-      .child(this.clearButton(t, r, this.armed === r.address));
+      .child(div().flex_none().w(48).h(6).rounded(3).bg(t.hover).overflow_hidden()
+        .child(div().h_full().rounded(3).w(Math.round(48 * fill)).bg(r.color ?? t.muted)))
+      .child(h_flex().flex_none().gap(4).items_center()
+        .child(this.handoverButton(t, r, h))
+        .child(this.clearButton(t, r, this.armed === r.address))
+        .child(this.applyButton(t, r, h)));
+  }
+
+  iconButton(t, id, icon, { enabled, lit, tip, onClick }) {
+    return div().id(id).flex_none().w(28).h(26).rounded(6).border_1().flex().items_center().justify_center()
+      .tooltip(tip)
+      .when(!enabled, (el) => el.border_color(t.border).text_color(t.dim).opacity(0.45))
+      .when(enabled, (el) => el.border_color(lit ? t.accent : t.border).bg(t.raised).cursor_pointer()
+        .text_color(lit ? t.accent : t.foreground).hover((s) => s.bg(t.hover)).on_click(onClick))
+      .when(!enabled && lit, (el) => el.opacity(0.8).text_color(t.accent))
+      .child(svg(`mods/cache-expiry/icons/${icon}.svg`).size(14));
+  }
+
+  // Asks the session to write its context and leftover tasks to a file for the next session.
+  handoverButton(t, r, h) {
+    const tip = h?.requested && !r.clearable ? "Writing the handover…"
+      : !r.clearable ? `Busy (${r.status}): save a handover once it is idle`
+      : h?.requested ? "The handover was asked for but no file arrived. Ask again"
+      : h?.saved ? "Handover saved. Save again to replace it"
+      : "Save a handover: context and leftover tasks for the next session";
+    return this.iconButton(t, `ce-handover-${r.address}`, "handover", {
+      enabled: r.clearable, lit: Boolean(h?.saved || h?.requested), tip,
+      onClick: (_e, cx) => { this.armed = null; this.act(r, "handover", () => requestHandover(r.address)); cx.notify(); },
+    });
+  }
+
+  // Gray until a saved handover exists and the conversation was cleared after it.
+  applyButton(t, r, h) {
+    const tip = !h?.saved ? "Apply a handover: save one first"
+      : !h.cleared ? "Apply a handover: clear the session first"
+      : !r.clearable ? `Busy (${r.status}): apply once it is idle`
+      : "Apply the saved handover to this fresh session";
+    return this.iconButton(t, `ce-apply-${r.address}`, "apply", {
+      enabled: Boolean(h?.ready) && r.clearable, lit: Boolean(h?.ready), tip,
+      onClick: (_e, cx) => { this.act(r, "apply", () => applyHandover(r.address)); cx.notify(); },
+    });
+  }
+
+  act(r, what, task) {
+    const verb = { handover: "handover requested", apply: "handover applied", clear: "cleared" }[what];
+    const body = {
+      handover: (path) => `It is writing ${path}. Clear it once that is done, then press play.`,
+      apply: (path) => `Sent ${path} to the fresh session.`,
+      clear: () => `Sent ${r.clear}. Its next prompt starts from an empty context.`,
+    }[what];
+    task().then(
+      (result) => notify({ title: `${r.where}: ${verb}`, body: body(result), level: "info", timeout: 6000 }),
+      (error) => notify({ title: `${r.where}: ${what} failed`, body: String(error?.message ?? error), level: "error", timeout: 8000 }),
+    );
   }
 
   // Two clicks: the first arms the button, the second sends the command. A clear cannot be undone.
   clearButton(t, r, armed) {
-    const base = div().id(`ce-clear-${r.address}`).flex_none().w(72).py(4).rounded(6).text_center().text_size(12).border_1();
+    const base = div().id(`ce-clear-${r.address}`).flex_none().w(64).h(26).rounded(6).flex().items_center()
+      .justify_center().text_size(12).border_1();
     if (!r.clearable) {
-      return base.border_color(t.border).text_color(t.dim).opacity(0.5)
+      return base.border_color(t.border).text_color(t.dim).opacity(0.45)
         .tooltip(`Busy (${r.status}): clear it once it is idle`).child("Clear");
     }
     if (armed) {
       return base.border_color(DANGER).bg(DANGER).text_color("#ffffff").cursor_pointer()
         .tooltip(`Sends ${r.clear} to ${r.where}`)
-        .on_click((_e, cx) => { this.armed = null; this.clear(r); cx.notify(); })
+        .on_click((_e, cx) => { this.armed = null; this.act(r, "clear", () => this.clear(r)); cx.notify(); })
         .child("Confirm");
     }
     return base.border_color(t.border).bg(t.raised).cursor_pointer().hover((s) => s.bg(t.hover))
@@ -299,12 +374,9 @@ export default class CacheExpiry extends View {
       .child("Clear");
   }
 
-  clear(r) {
-    const fail = (body) => notify({ title: `${r.where}: clear failed`, body, level: "error", timeout: 8000 });
-    hc(["send", r.address, r.clear]).then((result) => {
-      if (result?.code !== 0) return fail((result?.stderr || "hc send failed").trim());
-      notify({ title: `${r.where}: cleared`, body: `Sent ${r.clear}. Its next prompt starts from an empty context.`, level: "info", timeout: 6000 });
-    }, (error) => fail(String(error)));
+  async clear(r) {
+    await send(r.address, r.clear);
+    await markCleared(r.address).catch(() => null);
   }
 
   settingsDialog(t, c) {
