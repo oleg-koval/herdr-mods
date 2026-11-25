@@ -2,7 +2,7 @@
 
 Tells you when a Claude terminal's prompt cache has gone cold. Each Claude agent's status circle cools from hot to cold as its cache ages, so you can see at a glance which conversations will be rewritten at the cache-write price on the next prompt. Switching to a cold conversation posts one toast that names its space and tab.
 
-Copy [mods/cache-expiry](mods/cache-expiry/) into Herdr's `mods/` directory. It publishes the circle colours that [Agent Brief](../agent-brief/RECIPE.md) draws, posts the toast, and shows a cache icon with a status dot. Hover for the tracked Claude caches and the Codex hit rate. The dot is green when usage is available, muted when no sample is available, or uses your cold colour when any tracked Claude cache has expired.
+Copy [mods/cache-expiry](mods/cache-expiry/) into Herdr's `mods/` directory. It publishes the circle colours that [Agent Brief](../agent-brief/RECIPE.md) draws, posts the toast, and shows a cache icon with a status dot. The dot is the focused tab's own cache: its colour runs from your hot colour to your cold colour as that Claude conversation idles, or with the Codex cache-hit rate (100% hot, 0% cold). It is muted when the focused tab has no Claude or Codex session or no sample yet. Hover for this tab's state plus the totals over every tracked cache.
 
 Herdr runs a mod only while its block is in the layout, so the indicator keeps it working. The first time Herdr sees the folder it docks the indicator at the bottom of the shown layout. Move it anywhere you like, for example under Agent Brief:
 
@@ -15,9 +15,15 @@ Herdr runs a mod only while its block is in the layout, so the indicator keeps i
 
 If you remove the block, the circles stop cooling and the toast stops.
 
+## Sessions
+
+Click the cache icon (or run **Cache sessions** from the command palette) to open the dialog on **Sessions**: every Claude and Codex session, hottest first, each with its colour, a bar for the warmth left, and a line such as `warm · cold in 23m · 161k tokens`, `cold · idle 2h 5m`, or `97% of input cached on the last request`. Click a row to go to that tab.
+
+**Clear** starts a fresh conversation in that tab: it sends `/clear` to Claude or `/new` to Codex with `hc send`. The first click arms the button and the second (**Confirm**) sends. It is only offered while the session is idle or done, so it never lands in a running turn or answers a permission prompt. Clearing drops the conversation; it cannot be undone.
+
 ## Settings
 
-Click the cache icon to open the settings dialog, or run **Cache expiry settings** from the command palette. Every change applies at once.
+The dialog's **Settings** tab holds the settings. Every change applies at once.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
