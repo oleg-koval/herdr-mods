@@ -286,7 +286,13 @@ export default class PrReview extends View {
     if (snap) {
       status.push(small(snap.live ? "● live" : "❚❚ paused", snap.live ? t.done : warn));
       if (snap.stale) status.push(small("heartbeat STALE", t.blocked));
-      status.push(small(`${snap.running}/${snap.max_concurrent} running · ${queuedCount(snap)} queued`));
+      const running = `${snap.running}/${snap.max_concurrent} running · ${queuedCount(snap)} queued`;
+      status.push(snap.running > 0
+        ? div().id("pr-review-running").text_size(11).truncate().cursor_pointer()
+          .text_color(this.view === "running" ? t.foreground : t.working ?? t.muted)
+          .hover((s) => s.text_color(t.foreground)).tooltip("Show the PRs being reviewed now")
+          .on_click((_e, cx) => this.setView("running", cx)).child(running)
+        : small(running));
       status.push(small(`${money(snap.cost_today)} today · ${snap.runs_today} runs`));
       if (snap.denials_today > 0) status.push(small(`${snap.denials_today} guard denials`, warn));
       for (const m of [miniStatus("DM", snap.dm), miniStatus("Team", snap.team)]) status.push(small(m.text, t[m.tone] ?? t.dim));
@@ -341,7 +347,7 @@ export default class PrReview extends View {
     } else if (!rows.length) {
       const empty = this.query.trim()
         ? `No match for "${this.query.trim()}"`
-        : this.view === "needs" ? "Nothing needs you" : `No ${VIEW_LABEL[this.view].toLowerCase()} yet`;
+        : this.view === "needs" ? "Nothing needs you" : this.view === "running" ? "Nothing is being reviewed now" : `No ${VIEW_LABEL[this.view].toLowerCase()} yet`;
       body = div().p(24).text_size(13).text_color(t.dim).child(empty);
     } else {
       body = v_flex().children(page.slice.map((row, i) => this.line(t, row, page.page * this.pageSize + i, page.page * this.pageSize + i === this.sel)));

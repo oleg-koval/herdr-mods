@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   NEEDS_YOU, actionsFor, age, clampIndex, cli, countdown, failedCount, filterRows, matches, money, needsCount,
   pageOf, paginate, parseSnapshot, prUrl, pullsUrl, shortRepo, statusMeta, viewCount, viewRows,
-  findTab, miniStatus, panelPath, reviewPathOk,
+  findTab, miniStatus, panelPath, reviewPathOk, VIEWS, VIEW_LABEL,
 } from "./rules.js";
 
 const pr = (n, status, extra = {}) => ({
@@ -167,4 +167,12 @@ test("the guard mod carries identical copies of engine.js and rules.js, and a mo
   const board = JSON.parse(read("pr-review", "mod.json"));
   assert.equal(board.focusable, true);
   assert.equal(board.overlay, undefined);
+});
+
+test("running view lists only reviews in progress, outside the sidebar views", () => {
+  const withRun = { ...snap(), prs: [...snap().prs, pr(5, "RUNNING")] };
+  assert.deepEqual(viewRows(withRun, "running").map((r) => r.pr.number), [5]);
+  assert.equal(viewRows(snap(), "running").length, 0);
+  assert.equal(VIEWS.includes("running"), false);
+  assert.equal(VIEW_LABEL.running, "Reviewing now");
 });
