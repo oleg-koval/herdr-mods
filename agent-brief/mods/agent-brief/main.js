@@ -31,6 +31,9 @@ export default class AgentBrief extends View {
           .child(h_flex().gap(6).items_center()
             .child(div().w(8).h(8).rounded(4).flex_none().bg(dot))
             .child(div().flex_1().truncate().text_color(t.foreground).child(`${a.space_name} / ${a.tab_name || a.title}`))
+            .when(typeof h?.codexHit === "number", (el) => el.child(div().id(`codex-hit-${a.address}`).flex_none()
+              .text_size(11).text_color(t.muted).tooltip("Cached input on the last reported Codex request")
+              .child(`cache ${h.codexHit}%`)))
             .when(Boolean(h?.cold), (el) => el.child(div().flex_none().text_size(11).text_color(t.blocked).child(`cold ${h.idleMin}m`))))
           .when(Boolean(context), (el) => el.child(div().pl(14).truncate().text_size(11.5).text_color(t.muted).child(context)));
       }),
