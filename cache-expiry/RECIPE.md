@@ -33,4 +33,16 @@ The same settings are declared in `mod.json`, so a Settings screen with a Mods p
 
 The mod reads the local transcript that `herdr-hook.sh` records for each terminal in `~/.local/state/herdr-idle/<terminal>`, using `tail`. Without that hook state there is nothing to cool, and the mod does nothing.
 
-Verify: an idle Claude terminal's circle moves from orange toward blue over the TTL, a "cold" mark appears after it, and focusing that terminal posts one toast with its space and tab in the title. Run `npm test` for the pure logic.
+## Codex cache hits
+
+The strip shows how many Codex sessions have reported usage and their aggregate cache-hit percentage. Agent Brief shows each sampled session's percentage. These percentages measure cached input tokens from the last reported request per session. A zero-hit request shows 0%, and missing reports stay unsampled. Codex does not report an expiry time, so the Claude expiry colours and alerts apply only to Claude.
+
+Register the installed `codex-cache-hook.py` with Codex under both `SessionStart` and `PostModelRequest`. Use a Codex CLI with `PostModelRequest` support, Python 3, and `hc` on the terminal's PATH. For each event, add a group like this inside `hooks` in `~/.codex/hooks.json`. Substitute the actual Herdr app directory if yours differs:
+
+```json
+{ "hooks": [{ "type": "command", "command": "python3 \"$HOME/.config/herdr-app/mods/cache-expiry/codex-cache-hook.py\"", "timeout": 4 }] }
+```
+
+Review the hook entries in Codex with `/hooks`, then start or resume Codex in Herdr. The hook writes only the session ID and numeric usage to Herdr terminal labels. It does not read prompts or transcripts or make network requests.
+
+Verify that a Claude terminal still cools as before and that a completed Codex request adds a percentage to Agent Brief and updates the strip. Run `npm test` and `python3 -B -m unittest discover -s cache-expiry/tests` for the logic and hook checks.

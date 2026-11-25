@@ -8,11 +8,12 @@
 
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, focused, exec, home, appHome, readTextFile, notify, shared, setShared, checking, theme, props, run, closeOverlay } from "herdr";
+import { agents, focused, exec, home, appHome, readTextFile, notify, shared, setShared, checking, terminals, theme, props, run, closeOverlay } from "herdr";
 import {
   KEYS, LIMITS, readSettings, stepped, legacySettings,
   lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText,
 } from "./cold.js";
+import { codexSamples, codexStripText, hitRate } from "./codex.js";
 
 const LEGACY_IMPORTED = "cache-expiry.legacyConfigImported";
 const isClaude = (a) => a.app === "claude-code";
@@ -29,6 +30,7 @@ export default class CacheExpiry extends View {
     this.statuses = {};
     this.warned = {};
     this.published = "";
+    this.codex = { count: 0, samples: {} };
     this.lastFocus = null;
     this.lastSettings = JSON.stringify(conf());
     if (this.overlay || checking()) return;
@@ -127,6 +129,10 @@ export default class CacheExpiry extends View {
         idleMin: Math.floor((now - u.at) / 60_000),
       };
     }
+    this.codex = codexSamples(agents(), terminals());
+    for (const [address, { input, cached }] of Object.entries(this.codex.samples)) {
+      heat[address] = { codexHit: hitRate(cached, input) };
+    }
     // every mod re-renders on a set, so only publish when something the drawing shows has changed
     const text = JSON.stringify(heat);
     if (text === this.published) return;
@@ -174,12 +180,13 @@ export default class CacheExpiry extends View {
   strip(t, c) {
     const s = summarize(this.reads.usage, Date.now(), c.ttlMinutes * 60_000);
     const dot = s.cold + s.warm === 0 ? t.muted : s.cold ? c.circle.cold : c.circle.hot;
+    const summary = [stripText(s), codexStripText(this.codex)].filter(Boolean).join("  /  ");
     return h_flex().id("cache-expiry-strip").size_full().px(10).gap(6).items_center().bg(t.chrome)
       .text_size(11.5).text_color(t.muted).cursor_pointer()
       .hover((st) => st.bg(t.hover))
       .on_click(() => run("mod.open", { name: "cache-expiry" }))
       .child(div().w(8).h(8).rounded(4).flex_none().bg(dot))
-      .child(div().flex_1().truncate().child(stripText(s)))
+      .child(div().flex_1().truncate().child(summary))
       .child(div().flex_none().text_color(t.dim).child("Settings"));
   }
 
@@ -195,7 +202,7 @@ export default class CacheExpiry extends View {
     const minTokens = (c) => c.minTokens;
     return v_flex().size_full().bg(t.popover).p(20).gap(2).text_color(t.foreground)
       .child(div().text_size(16).font_semibold().child("Cache expiry"))
-      .child(div().pb(8).text_size(12.5).text_color(t.dim).child("How Claude prompt caches show as they go cold."))
+      .child(div().pb(8).text_size(12.5).text_color(t.dim).child("Claude cache expiry and observed Codex cache hits."))
       .child(this.gradient(t, c))
       .child(this.row(t, "Cooling circles", "Idle and done circles in Agent Brief cool from hot to cold.",
         this.toggle(t, "ce-circles", c.circle.enabled, flip(KEYS.circles, (s) => s.circle.enabled))))
