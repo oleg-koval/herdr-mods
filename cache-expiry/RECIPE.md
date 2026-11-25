@@ -21,6 +21,15 @@ Click the cache icon (or run **Cache sessions** from the command palette) to ope
 
 **Clear** starts a fresh conversation in that tab: it sends `/clear` to Claude or `/new` to Codex with `hc send`. The first click arms the button and the second (**Confirm**) sends. It is only offered while the session is idle or done, so it never lands in a running turn or answers a permission prompt. Clearing drops the conversation; it cannot be undone.
 
+## Handover
+
+Two buttons sit either side of **Clear**:
+
+- **Save handover** (down arrow) asks the session to write its context and leftover tasks to `~/.local/state/herdr-handover/<terminal>.md`: goal, state with receipts, decisions, a task checklist and the next step. It lights up while the file is being written and once it is saved. Saving again replaces it.
+- **Apply handover** (play) stays grey until both are true: the handover file exists, and the conversation was cleared after it was asked for. Cleared means the conversation id on the terminal changed (`claude.session`, set by `herdr-hook.sh` on SessionStart; `codex.cache.session` from the Codex hook), or this dialog's Clear was used. Applying moves the file to `applied/<terminal>-<time>.md` and tells the fresh session to read it and carry on from its next step.
+
+A `<terminal>.json` beside each handover records when it was asked for and which conversation asked. Text goes to the session with `hc send`, run without `HC_TERMINAL_ID` so hc does not wrap it in `<hc from=...>` tags (a wrapped `/clear` reads as a message, not a command).
+
 ## Settings
 
 The dialog's **Settings** tab holds the settings. Every change applies at once.
