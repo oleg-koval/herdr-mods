@@ -1,0 +1,24 @@
+{
+  "before": "4d6f8cbccaf8419e18b058a79a473c70dca04a66",
+  "after": "a16a944da6b4911429c0b54e2be5a22499ac67de",
+  "parts": [
+    {
+      "name": "Fielddesk cache status strip",
+      "desktop_before": "baseline-strip.png",
+      "desktop_after": "candidate-strip.png",
+      "mobile_applicable": false
+    },
+    {
+      "name": "Agent Brief cache badge",
+      "desktop_before": "baseline-brief.png",
+      "desktop_after": "candidate-brief.png",
+      "mobile_applicable": false
+    },
+    {
+      "name": "Cache Expiry Settings header",
+      "desktop_before": "baseline-settings.png",
+      "desktop_after": "candidate-settings.png",
+      "mobile_applicable": false
+    }
+  ]
+}
