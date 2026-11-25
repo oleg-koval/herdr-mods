@@ -1,0 +1,12 @@
+{
+  "before": "0033dc5a16b326a124434725ced888d4f7c10b02",
+  "after": "0ae236a8754ff1d1bae569bf10d5297e6a0f6467",
+  "parts": [
+    {
+      "name": "Cache dialog Sessions tab",
+      "desktop_before": "before.png",
+      "desktop_after": "after.png",
+      "mobile_applicable": false
+    }
+  ]
+}
