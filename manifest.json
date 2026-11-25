@@ -1,0 +1,18 @@
+{
+  "before": "2055548f39d44ac661b1a2a1d1cb6828a1103c47",
+  "after": "3002eeff2dc9aeead38a884b54204d4b2de069f2",
+  "parts": [
+    {
+      "name": "Cache status indicator",
+      "desktop_before": "baseline-footer.png",
+      "desktop_after": "mod-footer.png",
+      "mobile_applicable": false
+    },
+    {
+      "name": "Jev status in Fielddesk toolbar",
+      "desktop_before": "baseline-toolbar.png",
+      "desktop_after": "mod-toolbar.png",
+      "mobile_applicable": false
+    }
+  ]
+}
