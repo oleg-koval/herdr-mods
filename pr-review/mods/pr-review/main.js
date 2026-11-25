@@ -75,14 +75,24 @@ export default class PrReview extends View {
     if (this.busy) return;
     this.busy = true;
     cx.spawn(async (cx) => {
+      const seq = this.startRead();
       const r = await this.engine.read(force);
       this.busy = false;
-      this.take(r);
+      this.take(r, seq);
       cx.notify();
     });
   }
 
-  take(r) {
+  // A refresh and a write can read at the same time; numbering reads by when they started lets
+  // take() drop one that started before the snapshot already on screen.
+  startRead() {
+    this.readSeq = (this.readSeq ?? 0) + 1;
+    return this.readSeq;
+  }
+
+  take(r, seq) {
+    if (seq < (this.takenSeq ?? 0)) return;
+    this.takenSeq = seq;
     if (r.snap) {
       this.snap = r.snap;
       this.okAt = Date.now();
@@ -99,11 +109,15 @@ export default class PrReview extends View {
     this.note = { text: `${label}…`, tone: "dim" };
     cx.notify();
     cx.spawn(async (cx) => {
+      let seq = this.startRead();
       let r = printsJson ? await this.engine.panel(argv) : await this.engine.command(argv);
-      if (r.ok) r = await this.engine.read();
+      if (r.ok) {
+        seq = this.startRead();
+        r = await this.engine.read();
+      }
       this.acting = false;
       if (r.snap) {
-        this.take(r);
+        this.take(r, seq);
         this.note = { text: `${label}: done`, tone: "done" };
       } else {
         this.note = { text: `${label}: ${r.error}`, tone: "blocked" };
