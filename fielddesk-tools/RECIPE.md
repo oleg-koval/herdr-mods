@@ -10,6 +10,7 @@ Copy each folder under [mods](mods/) into your Herdr app's `mods/` directory. Fo
 - `fielddesk-task` creates or reopens a Git worktree for a named task. It runs Git in the selected workspace and opens a terminal there after creation.
 - `fielddesk-queue` orders agents by attention status. Selecting an agent focuses its pane or previews its terminal. Under each name it shows the space and the session's one-line context (the `herdr_context_label` label, `herdr.context` by default). With [Cache Expiry](../cache-expiry/RECIPE.md) installed, idle and done agents get a small dot that cools from hot to cold with their prompt cache; hover it for the idle time.
 - `fielddesk-attention` shows the session tree and worker status. It reads Herdr's reported state and never starts workers.
+- `fielddesk-tab-menu` is a tab right-click menu: Rename, New tab, Fork session and Close. Fork session appears on a tab with a Claude session and opens the `thread-fork` dialog for it (install that mod too). Herdr's tab strip always opens its own `menu`, so point a tab strip's right-click at `fielddesk-tab-menu`: clone `tabs` with `herdr-app do mod.clone` and change the popup's `mod`.
 - `fielddesk-handoff` shows session context and copies a handoff note on request. It reads the `herdr.context` terminal label by default. Set `herdr_context_label` in Herdr's `settings.json` to use an existing label.
 
 Verify a live agent can be reached from the queue, a named task opens the expected worktree, and the Jev dot has a status tooltip.
