@@ -1,9 +1,18 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { focused, notify, panes, settings, spaces, terminals, theme } from "herdr";
+import { appHome, focused, notify, panes, readTextFile, spaces, terminals, theme } from "herdr";
 import { resumeNote } from "./note.js";
+import { DEFAULT_CONTEXT_LABEL, contextLabelFrom } from "./label.js";
 
 export default class Handoff extends View {
+  init(_props, cx) {
+    this.contextLabel = DEFAULT_CONTEXT_LABEL;
+    cx.spawn(async (cx) => {
+      this.contextLabel = contextLabelFrom(await readTextFile(`${appHome()}/settings.json`).catch(() => null));
+      cx.notify();
+    });
+  }
+
   render() {
     const t = theme();
     const focus = focused();
@@ -11,7 +20,7 @@ export default class Handoff extends View {
     const pane = panes().find((entry) => entry.pane === focus?.pane);
     const tab = space?.tabs.find((entry) => entry.id === focus?.tab);
     const terminal = terminals().find((entry) => entry.address === focus?.terminal);
-    const context = terminal?.labels?.[settings().herdr_context_label || "herdr.context"];
+    const context = terminal?.labels?.[this.contextLabel];
     const note = resumeNote({ space: space?.name, tab: tab?.name, folder: focus?.cwd, branch: pane?.branch, context });
     return v_flex().id("fielddesk-handoff").size_full().p(12).gap(8).bg(t.chrome).border_t(1).border_color(t.border).text_size(13)
       .child(h_flex().items_center().justify_between().gap(6)
