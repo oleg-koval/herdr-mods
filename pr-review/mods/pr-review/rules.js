@@ -4,7 +4,17 @@
 // pr_autoreview/panel.py). Nothing here reads the clock, the disk or the app.
 
 export const VIEWS = ["needs", "all", "repos", "runs"];
-export const VIEW_LABEL = { needs: "Needs you", all: "All PRs", repos: "Repos", runs: "Runs" };
+// "running" is not in the sidebar: it opens from the "running" status line, so a review in
+// progress can be found without scanning All PRs.
+export const VIEW_LABEL = { needs: "Needs you", all: "All PRs", repos: "Repos", runs: "Runs", running: "Reviewing now" };
+
+// Tab / Shift-Tab order. From a view outside the sidebar (Reviewing now), Tab goes to the first
+// sidebar view and Shift-Tab to the last, as if it sat just past the end of the list.
+export function nextView(view, step) {
+  const at = VIEWS.indexOf(view);
+  const from = at >= 0 ? at : step > 0 ? -1 : VIEWS.length;
+  return VIEWS[(from + step + VIEWS.length) % VIEWS.length];
+}
 
 // What the old panel's "Needs you" card counted: a person has to act.
 export const NEEDS_YOU = new Set(["HUMAN_NEEDED", "FAILED", "COLLISION", "NEW_COMMITS_SINCE_YOUR_REVIEW"]);
@@ -43,6 +53,7 @@ const byUpdated = (a, b) => String(b.pr.updated_at ?? "").localeCompare(String(a
 export function viewRows(snap, view) {
   if (view === "needs") return snap.prs.filter((p) => NEEDS_YOU.has(p.status)).map(prRow).sort(byUpdated);
   if (view === "all") return snap.prs.map(prRow).sort(byUpdated);
+  if (view === "running") return snap.prs.filter((p) => p.status === "RUNNING").map(prRow).sort(byUpdated);
   if (view === "repos") {
     // watched first, then ignored; alphabetical inside each group
     return snap.repos.map(repoRow).sort((a, b) => (a.repo.off - b.repo.off) || a.repo.repo.localeCompare(b.repo.repo));

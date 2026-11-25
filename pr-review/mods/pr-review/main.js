@@ -9,7 +9,7 @@ import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { checking, closeOverlay, exec, home, nextCommand, props, settings, theme } from "herdr";
 import {
   PR_ID_RE, REPO_RE, VIEWS, VIEW_LABEL, actionsFor, age, clampIndex, cli, countdown, failedCount,
-  filterRows, miniStatus, money, pageOf, paginate, prUrl,
+  filterRows, miniStatus, money, nextView, pageOf, paginate, prUrl,
   pullsUrl, queuedCount, reviewPathOk, shortRepo, statusMeta, viewCount, viewRows,
 } from "./rules.js";
 import { engineBin, makeEngine } from "./engine.js";
@@ -75,14 +75,24 @@ export default class PrReview extends View {
     if (this.busy) return;
     this.busy = true;
     cx.spawn(async (cx) => {
+      const seq = this.startRead();
       const r = await this.engine.read(force);
       this.busy = false;
-      this.take(r);
+      this.take(r, seq);
       cx.notify();
     });
   }
 
-  take(r) {
+  // A refresh and a write can read at the same time; numbering reads by when they started lets
+  // take() drop one that started before the snapshot already on screen.
+  startRead() {
+    this.readSeq = (this.readSeq ?? 0) + 1;
+    return this.readSeq;
+  }
+
+  take(r, seq) {
+    if (seq < (this.takenSeq ?? 0)) return;
+    this.takenSeq = seq;
     if (r.snap) {
       this.snap = r.snap;
       this.okAt = Date.now();
@@ -99,11 +109,15 @@ export default class PrReview extends View {
     this.note = { text: `${label}…`, tone: "dim" };
     cx.notify();
     cx.spawn(async (cx) => {
+      let seq = this.startRead();
       let r = printsJson ? await this.engine.panel(argv) : await this.engine.command(argv);
-      if (r.ok) r = await this.engine.read();
+      if (r.ok) {
+        seq = this.startRead();
+        r = await this.engine.read();
+      }
       this.acting = false;
       if (r.snap) {
-        this.take(r);
+        this.take(r, seq);
         this.note = { text: `${label}: done`, tone: "done" };
       } else {
         this.note = { text: `${label}: ${r.error}`, tone: "blocked" };
@@ -166,7 +180,7 @@ export default class PrReview extends View {
   }
 
   cycleView(step, cx) {
-    this.setView(VIEWS[(VIEWS.indexOf(this.view) + step + VIEWS.length) % VIEWS.length], cx);
+    this.setView(nextView(this.view, step), cx);
   }
 
   key(e, cx) {
@@ -286,7 +300,13 @@ export default class PrReview extends View {
     if (snap) {
       status.push(small(snap.live ? "● live" : "❚❚ paused", snap.live ? t.done : warn));
       if (snap.stale) status.push(small("heartbeat STALE", t.blocked));
-      status.push(small(`${snap.running}/${snap.max_concurrent} running · ${queuedCount(snap)} queued`));
+      const running = `${snap.running}/${snap.max_concurrent} running · ${queuedCount(snap)} queued`;
+      status.push(snap.running > 0
+        ? div().id("pr-review-running").text_size(11).truncate().cursor_pointer()
+          .text_color(this.view === "running" ? t.foreground : t.working ?? t.muted)
+          .hover((s) => s.text_color(t.foreground)).tooltip("Show the PRs being reviewed now")
+          .on_click((_e, cx) => this.setView("running", cx)).child(running)
+        : small(running));
       status.push(small(`${money(snap.cost_today)} today · ${snap.runs_today} runs`));
       if (snap.denials_today > 0) status.push(small(`${snap.denials_today} guard denials`, warn));
       for (const m of [miniStatus("DM", snap.dm), miniStatus("Team", snap.team)]) status.push(small(m.text, t[m.tone] ?? t.dim));
@@ -341,7 +361,7 @@ export default class PrReview extends View {
     } else if (!rows.length) {
       const empty = this.query.trim()
         ? `No match for "${this.query.trim()}"`
-        : this.view === "needs" ? "Nothing needs you" : `No ${VIEW_LABEL[this.view].toLowerCase()} yet`;
+        : this.view === "needs" ? "Nothing needs you" : this.view === "running" ? "Nothing is being reviewed now" : `No ${VIEW_LABEL[this.view].toLowerCase()} yet`;
       body = div().p(24).text_size(13).text_color(t.dim).child(empty);
     } else {
       body = v_flex().children(page.slice.map((row, i) => this.line(t, row, page.page * this.pageSize + i, page.page * this.pageSize + i === this.sel)));
