@@ -3,6 +3,7 @@
 export const DEFAULTS = Object.freeze({
   ttlMinutes: 55, // just under the 1 h prompt-cache TTL: the cache is cold from here on
   minTokens: 80_000, // below this a rewrite is not worth a warning
+  compactTokens: 200_000, // a conversation this big gets a Compact button
   toast: true,
   toastSeconds: 12,
   circle: Object.freeze({ enabled: true, hot: "#ff6b35", cold: "#4a9eff" }),
@@ -12,6 +13,7 @@ export const DEFAULTS = Object.freeze({
 export const KEYS = Object.freeze({
   ttl: "cache-expiry.ttl",
   minTokens: "cache-expiry.minTokens",
+  compactTokens: "cache-expiry.compactTokens",
   toast: "cache-expiry.toast",
   toastSeconds: "cache-expiry.toastSeconds",
   circles: "cache-expiry.circles",
@@ -22,6 +24,7 @@ export const KEYS = Object.freeze({
 export const LIMITS = Object.freeze({
   ttlMinutes: { min: 5, max: 600, step: 5 },
   minTokens: { min: 0, max: 1_000_000, step: 10_000 },
+  compactTokens: { min: 50_000, max: 1_000_000, step: 25_000 },
   toastSeconds: { min: 3, max: 60, step: 1 },
 });
 
@@ -44,6 +47,7 @@ export function readSettings(get) {
   return {
     ttlMinutes: inRange(durationMinutes(get(KEYS.ttl)), DEFAULTS.ttlMinutes, LIMITS.ttlMinutes),
     minTokens: inRange(get(KEYS.minTokens), DEFAULTS.minTokens, LIMITS.minTokens),
+    compactTokens: inRange(get(KEYS.compactTokens), DEFAULTS.compactTokens, LIMITS.compactTokens),
     toast: bool(get(KEYS.toast), DEFAULTS.toast),
     toastSeconds: inRange(get(KEYS.toastSeconds), DEFAULTS.toastSeconds, LIMITS.toastSeconds),
     circle: {

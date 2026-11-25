@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sessionRows, rowsSummary, idleText } from "./sessions.js";
+import { sessionRows, rowsSummary, idleText, kTokens } from "./sessions.js";
 
 const now = 10 * 60 * 60_000;
-const opts = { ttlMinutes: 60, hot: "#ff0000", cold: "#0000ff" };
+const opts = { ttlMinutes: 60, hot: "#ff0000", cold: "#0000ff", compactTokens: 100_000 };
 const agent = (address, app, status = "idle", extra = {}) =>
   ({ address, app, status, space_name: "S", tab_name: address, title: "", focused: false, ...extra });
 
@@ -20,7 +20,7 @@ test("sessionRows: Claude warmth from the last turn, Codex from its hit rate, ho
     agent("t4", "shell"), agent("t5", "claude-code", "working"),
   ], {
     t1: { at: now - 30 * 60_000, tokens: 120_000 },
-    t2: { codexHit: 90 },
+    t2: { codexHit: 90, tokens: 250_000 },
     t3: { at: now - 90 * 60_000, tokens: 5_000 },
   }, now, opts);
   assert.deepEqual(rows.map((r) => r.address), ["t2", "t1", "t3", "t5"]);
@@ -28,13 +28,22 @@ test("sessionRows: Claude warmth from the last turn, Codex from its hit rate, ho
   assert.equal(codex.clear, "/new");
   assert.equal(warm.clear, "/clear");
   assert.equal(warm.temp, 0.5);
-  assert.equal(warm.detail, "warm · cold in 30m · 120k tokens");
+  assert.equal(warm.detail, "warm · cold in 30m");
+  assert.equal(warm.context, 120_000);
+  assert.equal(warm.large, true);
+  assert.equal(codex.context, 250_000);
+  assert.equal(codex.large, true);
+  assert.equal(codex.detail, "90% cached on the last request");
   assert.equal(cold.temp, 1);
   assert.equal(cold.color, "#0000ff");
-  assert.equal(cold.detail, "cold · idle 1h 30m · 5k tokens");
+  assert.equal(cold.detail, "cold · idle 1h 30m");
+  assert.equal(cold.large, false);
   assert.equal(none.temp, null);
   assert.equal(none.color, null);
   assert.equal(none.clearable, false);
+  assert.equal(none.context, null);
+  assert.equal(none.large, false);
+  assert.equal(kTokens(246_400), "246k");
   assert.equal(warm.clearable, true);
 });
 
