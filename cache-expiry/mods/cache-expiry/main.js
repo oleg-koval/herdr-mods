@@ -1,24 +1,27 @@
 // Cache expiry: when a Claude conversation's prompt cache goes cold. It publishes, for every Claude
 // agent, a circle colour that cools from hot to cold as the cache ages (shared("cache-expiry.heat"),
 // read by agent-brief), posts one toast, naming the space and tab, when you switch to a cold
-// conversation before you type, and draws a cache indicator. Its layout block keeps it running.
-// Clicking the indicator opens this mod again as its settings dialog (mod.open); that copy only draws
-// the settings. The same settings are listed in Settings > Mods.
+// conversation before you type, and draws a cache indicator whose dot is the focused tab's cache.
+// Its layout block keeps it running. Clicking the indicator opens this mod again as a dialog
+// (mod.open): every Claude and Codex session by temperature, each with a Clear button, and the
+// settings. That copy only draws. The same settings are listed in Settings > Mods.
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, focused, exec, home, appHome, readTextFile, notify, shared, setShared, checking, terminals, theme, props, run, closeOverlay } from "herdr";
+import { agents, focused, exec, hc, home, appHome, readTextFile, notify, shared, setShared, checking, terminals, theme, props, run, closeOverlay } from "herdr";
 import {
   KEYS, LIMITS, readSettings, stepped, legacySettings,
   lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText,
 } from "./cold.js";
 import { codexSamples, codexStripText, hitRate } from "./codex.js";
+import { sessionRows, rowsSummary } from "./sessions.js";
 
 const LEGACY_IMPORTED = "cache-expiry.legacyConfigImported";
 const isClaude = (a) => a.app === "claude-code";
 const conf = () => readSettings((key) => shared(key));
 const HOT = [["#ff6b35", "Orange"], ["#ef4444", "Red"], ["#f59e0b", "Amber"], ["#ec4899", "Pink"]];
 const COLD = [["#4a9eff", "Blue"], ["#22d3ee", "Cyan"], ["#a78bfa", "Violet"], ["#8b949e", "Grey"]];
+const DANGER = "#dc2626";
 
 export default class CacheExpiry extends View {
   init(_props, cx) {
@@ -33,6 +36,8 @@ export default class CacheExpiry extends View {
     this.localCodex = {};
     this.readingCodex = false;
     this.lastFocus = null;
+    this.page = "sessions";
+    this.armed = null;
     this.lastSettings = JSON.stringify(conf());
     if (this.overlay || checking()) return;
     cx.spawn(async () => this.importLegacyConfig());
@@ -153,6 +158,8 @@ export default class CacheExpiry extends View {
         color: circle.enabled ? mixHex(circle.hot, circle.cold, h) : null,
         cold: coldness(u, now, { ttlMs, minTokens }) !== null,
         idleMin: Math.floor((now - u.at) / 60_000),
+        at: u.at,
+        tokens: u.tokens,
       };
     }
     this.codex = codexSamples(agents(), terminals(), this.localCodex);
@@ -172,6 +179,7 @@ export default class CacheExpiry extends View {
     const now = focused()?.terminal ?? null;
     if (now === this.lastFocus) return;
     this.lastFocus = now;
+    cx.notify();
     if (!now || !agents().some((a) => a.address === now && isClaude(a))) return;
     cx.spawn(async (cx) => {
       await this.load(now);
@@ -200,24 +208,103 @@ export default class CacheExpiry extends View {
   }
 
   render() {
-    return this.overlay ? this.settingsDialog(theme(), conf()) : this.indicator(theme(), conf());
+    return this.overlay ? this.dialog(theme(), conf()) : this.indicator(theme(), conf());
   }
 
+  rows(c) {
+    return sessionRows(agents(), shared("cache-expiry.heat") ?? {}, Date.now(),
+      { ttlMinutes: c.ttlMinutes, hot: c.circle.hot, cold: c.circle.cold });
+  }
+
+  // The dot is the focused tab's own cache; the tooltip adds the totals over every session.
   indicator(t, c) {
     const s = summarize(this.reads.usage, Date.now(), c.ttlMinutes * 60_000);
-    const count = Object.keys(this.codex.samples).length;
-    const dot = s.cold ? c.circle.cold : s.warm || count ? "#16a34a" : t.muted;
-    const tooltip = [stripText(s), codexStripText(this.codex)].filter(Boolean).join(" / ");
+    const terminal = focused()?.terminal ?? null;
+    const mine = this.rows(c).find((r) => r.address === terminal);
+    const dot = mine?.color ?? t.muted;
+    const here = mine ? `This tab (${mine.app}): ${mine.detail}` : "This tab: no Claude or Codex session";
+    const tooltip = [here, stripText(s), codexStripText(this.codex)].filter(Boolean).join(" / ");
     const toolbar = Boolean(props()?.toolbar);
     return h_flex().size_full().items_center().bg(t.chrome)
       .when(toolbar, (el) => el.justify_center().border_b(1).border_color(t.border))
       .when(!toolbar, (el) => el.justify_end().pr(10))
-      .child(h_flex().id("cache-expiry-status").role("button").accessibility_label(`Cache settings. ${tooltip}`)
+      .child(h_flex().id("cache-expiry-status").role("button").accessibility_label(`Cache sessions. ${tooltip}`)
         .tooltip(tooltip).h(24).px(6).gap(5).items_center().rounded(4)
         .text_color(t.muted).hover((st) => st.bg(t.hover).text_color(t.foreground)).cursor_pointer()
         .on_click(() => run("mod.open", { name: "cache-expiry" }))
         .child(svg("mods/workspace-chrome/layers.svg").size(16))
         .child(div().size(8).rounded_full().bg(dot)));
+  }
+
+  dialog(t, c) {
+    const tab = (id, label) => div().id(`ce-page-${id}`).px(12).py(4).rounded(6).cursor_pointer().text_size(12.5)
+      .when(this.page === id, (el) => el.bg(t.raised).text_color(t.foreground))
+      .when(this.page !== id, (el) => el.text_color(t.dim).hover((s) => s.text_color(t.foreground)))
+      .on_click((_e, cx) => { this.page = id; this.armed = null; cx.notify(); })
+      .child(label);
+    return v_flex().size_full().bg(t.popover).text_color(t.foreground)
+      .child(h_flex().px(20).pt(18).pb(10).items_center()
+        .child(div().flex_1().text_size(16).font_semibold().child("Cache"))
+        .child(h_flex().p(2).gap(2).rounded(8).bg(t.hover)
+          .child(tab("sessions", "Sessions"))
+          .child(tab("settings", "Settings"))))
+      .child(this.page === "settings" ? this.settingsDialog(t, c) : this.sessions(t, c));
+  }
+
+  sessions(t, c) {
+    const rows = this.rows(c);
+    return v_flex().flex_1().min_h(0).px(20).pb(20).gap(8)
+      .child(div().text_size(12.5).text_color(t.dim).child(rowsSummary(rows)))
+      .child(this.gradient(t, c))
+      .child(v_flex().id("ce-sessions").flex_1().min_h(0).gap(2).overflow_y_scrollbar()
+        .children(rows.map((r) => this.sessionRow(t, r))))
+      .child(div().pt(4).text_size(11.5).text_color(t.dim)
+        .child("Clear starts a fresh conversation in that tab: /clear in Claude, /new in Codex. Idle tabs only."))
+      .child(h_flex().justify_end().pt(4)
+        .child(this.button(t, "ce-done", "Done", () => closeOverlay(this.overlay))));
+  }
+
+  sessionRow(t, r) {
+    const fill = r.temp === null ? 0 : Math.max(0.06, 1 - r.temp);
+    return h_flex().w_full().gap(10).px(8).py(7).rounded(8).items_center()
+      .when(r.focused, (el) => el.bg(t.selected))
+      .child(h_flex().id(`ce-go-${r.address}`).flex_1().min_w(0).gap(10).items_center().cursor_pointer()
+        .tooltip("Go to this tab")
+        .on_click(() => { run("agent.focus", { terminal: r.address }); closeOverlay(this.overlay); })
+        .child(div().size(10).flex_none().rounded_full().bg(r.color ?? t.muted))
+        .child(v_flex().flex_1().min_w(0).gap(1)
+          .child(div().text_size(13).truncate().child(r.where))
+          .child(div().text_size(11.5).text_color(t.dim).truncate().child(`${r.app} · ${r.detail}`))))
+      .child(div().flex_none().w(64).h(6).rounded(3).bg(t.hover).overflow_hidden()
+        .child(div().h_full().rounded(3).w(Math.round(64 * fill)).bg(r.color ?? t.muted)))
+      .child(this.clearButton(t, r, this.armed === r.address));
+  }
+
+  // Two clicks: the first arms the button, the second sends the command. A clear cannot be undone.
+  clearButton(t, r, armed) {
+    const base = div().id(`ce-clear-${r.address}`).flex_none().w(72).py(4).rounded(6).text_center().text_size(12).border_1();
+    if (!r.clearable) {
+      return base.border_color(t.border).text_color(t.dim).opacity(0.5)
+        .tooltip(`Busy (${r.status}): clear it once it is idle`).child("Clear");
+    }
+    if (armed) {
+      return base.border_color(DANGER).bg(DANGER).text_color("#ffffff").cursor_pointer()
+        .tooltip(`Sends ${r.clear} to ${r.where}`)
+        .on_click((_e, cx) => { this.armed = null; this.clear(r); cx.notify(); })
+        .child("Confirm");
+    }
+    return base.border_color(t.border).bg(t.raised).cursor_pointer().hover((s) => s.bg(t.hover))
+      .tooltip(`Start a fresh conversation (${r.clear})`)
+      .on_click((_e, cx) => { this.armed = r.address; cx.notify(); })
+      .child("Clear");
+  }
+
+  clear(r) {
+    const fail = (body) => notify({ title: `${r.where}: clear failed`, body, level: "error", timeout: 8000 });
+    hc(["send", r.address, r.clear]).then((result) => {
+      if (result?.code !== 0) return fail((result?.stderr || "hc send failed").trim());
+      notify({ title: `${r.where}: cleared`, body: `Sent ${r.clear}. Its next prompt starts from an empty context.`, level: "info", timeout: 6000 });
+    }, (error) => fail(String(error)));
   }
 
   settingsDialog(t, c) {
@@ -230,8 +317,7 @@ export default class CacheExpiry extends View {
     const ttl = (c) => c.ttlMinutes;
     const toastSeconds = (c) => c.toastSeconds;
     const minTokens = (c) => c.minTokens;
-    return v_flex().size_full().bg(t.popover).p(20).gap(2).text_color(t.foreground)
-      .child(div().text_size(16).font_semibold().child("Cache expiry"))
+    return v_flex().flex_1().min_h(0).px(20).pb(20).gap(2)
       .child(div().pb(8).text_size(12.5).text_color(t.dim).child("Claude cache expiry and observed Codex cache hits."))
       .child(this.gradient(t, c))
       .child(this.row(t, "Cooling circles", "Idle and done circles in Agent Brief cool from hot to cold.",
@@ -252,7 +338,7 @@ export default class CacheExpiry extends View {
         this.stepper(t, "ce-min-tokens", `${Math.round(c.minTokens / 1000)}k tokens`,
           step(KEYS.minTokens, minTokens, -1, LIMITS.minTokens),
           step(KEYS.minTokens, minTokens, 1, LIMITS.minTokens))))
-      .child(div().flex_1())
+      .child(div().flex_1().min_h(0))
       .child(h_flex().gap(8).justify_end().pt(12)
         .child(this.button(t, "ce-reset", "Reset to defaults", () => Object.values(KEYS).forEach((key) => setShared(key, null))))
         .child(this.button(t, "ce-done", "Done", () => closeOverlay(this.overlay))));
