@@ -11,7 +11,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { agents, focused, exec, home, appHome, readTextFile, notify, shared, setShared, checking, terminals, theme, props, run, closeOverlay } from "herdr";
 import {
   KEYS, LIMITS, readSettings, stepped, legacySettings,
-  lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText, ttlMsFor, PROVIDER_TTL_MS,
+  lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText, ttlMsFor,
 } from "./cold.js";
 import { codexSamples, codexStripText, hitRate } from "./codex.js";
 import { sessionRows, rowsSummary, kTokens } from "./sessions.js";
