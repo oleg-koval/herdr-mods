@@ -332,8 +332,13 @@ export default class PrReview extends View {
           .gap(6)
           .when(snap, (el) => el.child(act("pause", snap.live ? "Pause" : "Resume", cli.pause())))
           .when(failed > 0, (el) => el.child(act("retry-failed", `Retry failed (${failed})`, cli.retryFailed())))
-          .child(this.button(t, "refresh", this.busy ? "Refreshing…" : "Refresh", (cx) => this.refresh(cx, true), { disabled: this.busy }))
-          .when(snap, (el) => el.child(act("sync", "Sync", cli.sync()))),
+          // Refresh asks GitHub (a sync), so a PR assigned a moment ago shows up; before the first
+          // snapshot it can only re-read, since a sync needs a working engine.
+          .child(
+            snap
+              ? act("refresh", this.acting ? "Refreshing…" : "Refresh", cli.sync())
+              : this.button(t, "refresh", this.busy ? "Refreshing…" : "Refresh", (cx) => this.refresh(cx, true), { disabled: this.busy }),
+          ),
       );
   }
 
