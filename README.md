@@ -17,7 +17,15 @@ Native add-ons for [Herdr Desktop](https://github.com/herdrdev/herdr-app). Add a
 
 ## Install
 
-Open the recipe for a pack. It lists the folders to copy into your Herdr app home, the layout blocks or commands to use, and what the mod can access. Herdr mods run with your account's privileges. Inspect the files before installing them. Keep any existing mod with the same name by choosing a different name for the new mod and updating its references.
+Install a pack with one line, for example Cache Expiry:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/oleg-koval/herdr-mods/main/install.sh | sh -s cache-expiry
+```
+
+It copies the pack's mods into `~/.config/herdr-app/mods` (an existing mod of the same name moves to `mod-backups/`) and, for a pack that needs them, adds its Claude Code hooks to `~/.claude/settings.json`, backed up first. `--list` shows the packs; `--no-hooks` copies the mods and prints the hooks instead. Several packs can be named at once. Layouts and key bindings are still set by hand from the recipe.
+
+Or open the recipe for a pack. It lists the folders to copy into your Herdr app home, the layout blocks or commands to use, and what the mod can access. Herdr mods run with your account's privileges. Inspect the files before installing them. Keep any existing mod with the same name by choosing a different name for the new mod and updating its references.
 
 Use [Herdr Layouts](https://github.com/oleg-koval/herdr-layouts) for ready-made layout trees. The packs were extracted from a working Herdr Desktop 0.1.17 setup on macOS.
 

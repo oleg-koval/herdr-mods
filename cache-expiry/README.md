@@ -10,7 +10,17 @@ See every Claude Code and Codex session in [Herdr Desktop](https://github.com/he
 
 ## Install
 
-Requires macOS, Herdr Desktop with `hc` on your PATH, and Python 3 for the optional Codex reader.
+Requires macOS, Herdr Desktop with `hc` on your PATH, `jq`, and Python 3 for the optional Codex reader.
+
+One line copies the mod into Herdr and adds its Claude hook to `~/.claude/settings.json` (backed up first; a hook already there is kept):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/oleg-koval/herdr-mods/main/install.sh | sh -s cache-expiry
+```
+
+Then restart running Claude sessions (or send each one a prompt) and click the cache icon in the toolbar. For Codex, add its hook as described under [Codex cache hits](#codex-cache-hits).
+
+Or by hand:
 
 1. Copy the mod into Herdr's app home:
    ```sh
@@ -80,7 +90,7 @@ The dialog's **Settings** tab holds the settings. Every change applies at once.
 
 The same settings are declared in `mod.json`, so a Settings screen with a Mods page lists them too. Values are stored with `setShared` under `cache-expiry.*`; **Reset to defaults** clears them. An older install's `config.json` is imported once on first run; anything already set in the dialog wins.
 
-The mod reads the local transcript that `herdr-hook.sh` records for each terminal in `~/.local/state/herdr-idle/<terminal>`, using `tail`. Without that hook state there is nothing to cool, and the mod does nothing.
+The mod reads the local transcript that `claude-hook.sh` records for each terminal in `~/.local/state/herdr-idle/<terminal>`, using `tail`. Without that hook state there is nothing to cool, and the mod does nothing.
 
 ## Codex cache hits
 
