@@ -1,0 +1,4 @@
+{
+  "SessionStart": ["bash \"{{APP}}/mods/cache-expiry/claude-hook.sh\""],
+  "UserPromptSubmit": ["bash \"{{APP}}/mods/cache-expiry/claude-hook.sh\""]
+}
