@@ -13,8 +13,8 @@ SPEC.loader.exec_module(reader)
 SESSION = "12345678-abcd-1234-abcd-123456789abc"
 
 
-def token_row(input_tokens, cached):
-    return {"type": "event_msg", "payload": {"type": "token_count", "info": {
+def token_row(input_tokens, cached, timestamp=None):
+    return {**({"timestamp": timestamp} if timestamp else {}), "type": "event_msg", "payload": {"type": "token_count", "info": {
         "last_token_usage": {"input_tokens": input_tokens, "cached_input_tokens": cached},
     }}}
 
@@ -33,6 +33,13 @@ class TestCodexReader(unittest.TestCase):
             write(SESSION)
             self.assertEqual(reader.last_usage(path, root), {"input": 90, "cached": 0})
             self.assertIsNone(reader.last_usage(path, root / "different-root"))
+            rows = [{"type": "session_meta", "payload": {"id": SESSION, "session_id": SESSION}},
+                    token_row(90, 30, "2026-11-24T12:34:30.789Z")]
+            path.write_text("\n".join(map(json.dumps, rows)) + "\n")
+            self.assertEqual(reader.last_usage(path, root), {"input": 90, "cached": 30, "at": 1795523670789})
+            rows[1]["timestamp"] = "yesterday"
+            path.write_text("\n".join(map(json.dumps, rows)) + "\n")
+            self.assertEqual(reader.last_usage(path, root), {"input": 90, "cached": 30})
             write("other")
             self.assertIsNone(reader.last_usage(path, root))
 

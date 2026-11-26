@@ -6,13 +6,14 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 SESSION = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", re.I)
 TERMINAL = re.compile(r"t[a-z0-9]{1,32}")
 MAX_SAFE_INTEGER = (1 << 53) - 1
 
 
-def labels_for(payload):
+def labels_for(payload, now_ms=None):
     if not isinstance(payload, dict):
         return []
     session = payload.get("session_id")
@@ -32,7 +33,9 @@ def labels_for(payload):
     if (type(input_tokens) is not int or type(cached_tokens) is not int
             or not 0 <= cached_tokens <= input_tokens <= MAX_SAFE_INTEGER or input_tokens == 0):
         return []
-    return [f"codex.cache.usage={session}:{input_tokens}:{cached_tokens}"]
+    # The request's end time (ms) lets the mod count it against OpenAI's cache lifetime.
+    at = int(time.time() * 1000) if now_ms is None else now_ms
+    return [f"codex.cache.usage={session}:{input_tokens}:{cached_tokens}:{at}"]
 
 
 def main():

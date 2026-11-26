@@ -26,9 +26,10 @@ class CodexCacheHook(TestCase):
     def test_reports_top_level_sampling_on_the_associated_terminal(self):
         with (patch.dict(hook.os.environ, {"HC_TERMINAL_ID": "t16"}),
               patch.object(hook.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(json.dumps(SAMPLE).encode()))),
+              patch.object(hook.time, "time", return_value=1795600000.5),
               patch.object(hook.subprocess, "run") as run):
             hook.main()
-        self.assertEqual(run.call_args.args[0], ["hc", "label", "t16", f"codex.cache.usage={SESSION}:1000:750"])
+        self.assertEqual(run.call_args.args[0], ["hc", "label", "t16", f"codex.cache.usage={SESSION}:1000:750:1795600000500"])
 
     def test_ignores_inapplicable_or_invalid_usage(self):
         for update in (
@@ -39,5 +40,5 @@ class CodexCacheHook(TestCase):
         ):
             with self.subTest(update=update):
                 self.assertEqual(hook.labels_for({**SAMPLE, **update}), [])
-        self.assertEqual(hook.labels_for({**SAMPLE, "token_usage": {"input_tokens": 100, "cached_input_tokens": 0}}),
-                         [f"codex.cache.usage={SESSION}:100:0"])
+        self.assertEqual(hook.labels_for({**SAMPLE, "token_usage": {"input_tokens": 100, "cached_input_tokens": 0}}, now_ms=7),
+                         [f"codex.cache.usage={SESSION}:100:0:7"])

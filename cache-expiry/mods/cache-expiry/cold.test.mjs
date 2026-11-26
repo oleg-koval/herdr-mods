@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   readSettings, durationMinutes, stepped, legacySettings, DEFAULTS, KEYS, LIMITS,
-  lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText,
+  lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText, ttlMsFor, PROVIDER_TTL_MS,
 } from "./cold.js";
 
 test("applyRead: ok sets, absent clears, failed keeps the last known usage", () => {
@@ -30,11 +30,17 @@ test("keepOnly drops terminals that are gone", () => {
 test("summarize and stripText count cold and warm caches", () => {
   const now = 1_000_000_000;
   const usage = { a: { at: now - 70 * MIN, tokens: 1 }, b: { at: now - 50 * MIN, tokens: 1 }, c: { at: now - 10 * MIN, tokens: 1 } };
-  const s = summarize(usage, now, TTL);
+  const s = summarize(usage, now, () => TTL);
   assert.deepEqual(s, { cold: 1, warm: 2, nextColdMin: 5 });
   assert.equal(stripText(s), "Claude cache: 1 cold · 2 warm · next cold in 5m");
-  assert.equal(stripText(summarize({}, now, TTL)), "No Claude caches tracked");
-  assert.equal(stripText(summarize({ a: usage.a }, now, TTL)), "Claude cache: 1 cold · 0 warm");
+  assert.equal(stripText(summarize({}, now, () => TTL)), "No Claude caches tracked");
+  assert.equal(stripText(summarize({ a: usage.a }, now, () => TTL)), "Claude cache: 1 cold · 0 warm");
+});
+
+test("summarize counts each cache against its own lifetime", () => {
+  const now = 1_000_000_000;
+  const usage = { short: { at: now - 10 * MIN, ttlMs: 5 * MIN }, long: { at: now - 10 * MIN, ttlMs: 60 * MIN } };
+  assert.deepEqual(summarize(usage, now, (u) => u.ttlMs), { cold: 1, warm: 1, nextColdMin: 50 });
 });
 
 const MIN = 60_000;
@@ -131,5 +137,27 @@ test("lastUsage takes the newest assistant usage with its timestamp", () => {
     "not json \"usage\"",
     JSON.stringify({ timestamp: "2026-11-24T10:30:00Z", message: { role: "assistant", usage: { input_tokens: 10, cache_read_input_tokens: 20 } } }),
   ].join("\n");
-  assert.deepEqual(lastUsage(tail), { at: Date.parse("2026-11-24T10:30:00Z"), tokens: 30 });
+  assert.deepEqual(lastUsage(tail), { at: Date.parse("2026-11-24T10:30:00Z"), tokens: 30, ttlMs: null });
+});
+
+const turn = (time, creation) => JSON.stringify({ timestamp: time, message: { role: "assistant",
+  usage: { input_tokens: 1, cache_creation_input_tokens: 5, ...(creation ? { cache_creation: creation } : {}) } } });
+
+test("lastUsage keeps the lifetime of the newest cache write; a read-only turn keeps it", () => {
+  const oneHour = turn("2026-11-24T10:00:00Z", { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 500 });
+  const readOnly = turn("2026-11-24T10:10:00Z", { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 });
+  const fiveMin = turn("2026-11-24T10:20:00Z", { ephemeral_5m_input_tokens: 300, ephemeral_1h_input_tokens: 0 });
+  assert.equal(lastUsage([oneHour, readOnly].join("\n")).ttlMs, 60 * MIN);
+  assert.equal(lastUsage([oneHour, readOnly, fiveMin].join("\n")).ttlMs, 5 * MIN);
+  assert.equal(lastUsage(turn("2026-11-24T10:00:00Z", null)).ttlMs, null);
+});
+
+test("ttlMsFor: provider time by default, the manual time when turned off", () => {
+  const auto = { ttlAuto: true, ttlMinutes: 20 };
+  assert.equal(ttlMsFor(auto, "claude", { ttlMs: 5 * MIN }), 5 * MIN);
+  assert.equal(ttlMsFor(auto, "claude", { ttlMs: null }), PROVIDER_TTL_MS.claudeUnknown);
+  assert.equal(ttlMsFor(auto, "codex"), 30 * MIN);
+  const manual = { ttlAuto: false, ttlMinutes: 20 };
+  assert.equal(ttlMsFor(manual, "claude", { ttlMs: 5 * MIN }), 20 * MIN);
+  assert.equal(ttlMsFor(manual, "codex"), 20 * MIN);
 });

@@ -41,7 +41,7 @@ Herdr mods run with your account's privileges. Read the files before installing.
 
 Tells you when a Claude terminal's prompt cache has gone cold. Each Claude agent's status circle cools from hot to cold as its cache ages, so you can see at a glance which conversations will be rewritten at the cache-write price on the next prompt. Switching to a cold conversation posts one toast that names its space and tab.
 
-Copy [mods/cache-expiry](mods/cache-expiry/) into Herdr's `mods/` directory. It publishes the circle colours that [Agent Brief](../agent-brief/RECIPE.md) draws, posts the toast, and shows a cache icon with a status dot. The dot is the focused tab's own cache: its colour runs from your hot colour to your cold colour as that Claude conversation idles, or with the Codex cache-hit rate (100% hot, 0% cold). It is muted when the focused tab has no Claude or Codex session or no sample yet. Hover for this tab's state plus the totals over every tracked cache.
+Copy [mods/cache-expiry](mods/cache-expiry/) into Herdr's `mods/` directory. It publishes the circle colours that [Agent Brief](../agent-brief/RECIPE.md) draws, posts the toast, and shows a cache icon with a status dot. The dot is the focused tab's own cache: its colour runs from your hot colour to your cold colour as that conversation idles towards its provider's cache lifetime (see [Cache lifetime](#cache-lifetime)). A Codex session whose hook or reader gave no request time falls back to its cache-hit rate (100% hot, 0% cold). It is muted when the focused tab has no Claude or Codex session or no sample yet. Hover for this tab's state plus the totals over every tracked cache.
 
 Herdr runs a mod only while its block is in the layout, so the indicator keeps it working. The first time Herdr sees the folder it docks the indicator at the bottom of the shown layout. Move it anywhere you like, for example under Agent Brief:
 
@@ -82,7 +82,8 @@ The dialog's **Settings** tab holds the settings. Every change applies at once.
 | Cooling circles | on | Idle and done circles in Agent Brief cool from hot to cold. Off keeps the status colours. |
 | Hot colour | Orange | A cache that was just used. |
 | Cold colour | Blue | A cache that has expired. |
-| Cold after | 55 min | Idle time after which the cache counts as expired. Claude's prompt cache lasts one hour. |
+| Provider cache time | on | Each session counts against its provider's own cache lifetime (below). |
+| Cold after | 55 min | Your own expiry time for every Claude and Codex session. Used only when Provider cache time is off. |
 | Toast on a cold tab | on | When you switch to a cold Claude tab, one toast names its space and tab. |
 | Toast stays | 12 s | How long the toast stays. |
 | Warn from | 80k tokens | Smaller conversations get no toast and no cold mark. |
@@ -92,9 +93,18 @@ The same settings are declared in `mod.json`, so a Settings screen with a Mods p
 
 The mod reads the local transcript that `claude-hook.sh` records for each terminal in `~/.local/state/herdr-idle/<terminal>`, using `tail`. Without that hook state there is nothing to cool, and the mod does nothing.
 
+## Cache lifetime
+
+With **Provider cache time** on (the default), each session counts against the cache lifetime its provider actually gives it:
+
+- **Claude**: every request's usage in the transcript says which cache it wrote, `cache_creation.ephemeral_1h_input_tokens` (1 hour) or `ephemeral_5m_input_tokens` (5 minutes). The newest write decides; a turn that only reads the cache keeps it. A session that has shown neither counts as 1 hour.
+- **Codex**: 30 minutes after the last request, OpenAI's default minimum lifetime for GPT-5.6 and later and the typical one for GPT-5.5 ([prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)). The request time comes from the Codex hook or the local reader.
+
+Turn it off to use **Cold after** for every session instead.
+
 ## Codex cache hits
 
-The tooltip shows how many Codex sessions have reported usage and their aggregate cache-hit percentage. Agent Brief shows each sampled session's percentage. These percentages measure cached input tokens from the last reported request per session. A zero-hit request shows 0%. Codex expiry timing is unavailable, so the expiry colours and alerts apply only to Claude.
+The tooltip shows how many Codex sessions have reported usage and their aggregate cache-hit percentage. Agent Brief shows each sampled session's percentage. These percentages measure cached input tokens from the last reported request per session. A zero-hit request shows 0%. Codex sessions also cool with time once a sample carries its request time (see [Cache lifetime](#cache-lifetime)); the cold-tab toast is still Claude-only.
 
 On macOS, the mod can read the last token counters from a local Codex session in `~/.codex/sessions` while its foreground process holds exactly one matching rollout open. Only the two counts are returned to Herdr. Detached, remote, and unmatched sessions stay unsampled until a hook report arrives.
 

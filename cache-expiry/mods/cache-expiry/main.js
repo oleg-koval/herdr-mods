@@ -11,7 +11,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { agents, focused, exec, home, appHome, readTextFile, notify, shared, setShared, checking, terminals, theme, props, run, closeOverlay } from "herdr";
 import {
   KEYS, LIMITS, readSettings, stepped, legacySettings,
-  lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText,
+  lastUsage, heatOf, coldness, mixHex, applyRead, keepOnly, summarize, stripText, ttlMsFor,
 } from "./cold.js";
 import { codexSamples, codexStripText, hitRate } from "./codex.js";
 import { sessionRows, rowsSummary, kTokens } from "./sessions.js";
@@ -171,24 +171,29 @@ export default class CacheExpiry extends View {
   }
 
   publish() {
-    const { ttlMinutes, minTokens, circle } = conf();
-    const ttlMs = ttlMinutes * 60_000;
+    const c = conf();
     const now = Date.now();
-    const heat = {};
-    for (const [address, u] of Object.entries(this.reads.usage)) {
+    const entry = (u, ttlMs) => {
       const h = heatOf(u, now, ttlMs);
-      if (h === null) continue;
-      heat[address] = {
-        color: circle.enabled ? mixHex(circle.hot, circle.cold, h) : null,
-        cold: coldness(u, now, { ttlMs, minTokens }) !== null,
+      if (h === null) return null;
+      return {
+        color: c.circle.enabled ? mixHex(c.circle.hot, c.circle.cold, h) : null,
+        cold: coldness(u, now, { ttlMs, minTokens: c.minTokens }) !== null,
         idleMin: Math.floor((now - u.at) / 60_000),
         at: u.at,
         tokens: u.tokens,
+        ttlMs,
       };
+    };
+    const heat = {};
+    for (const [address, u] of Object.entries(this.reads.usage)) {
+      const e = entry(u, ttlMsFor(c, "claude", u));
+      if (e) heat[address] = e;
     }
     this.codex = codexSamples(agents(), terminals(), this.localCodex);
-    for (const [address, { input, cached }] of Object.entries(this.codex.samples)) {
-      heat[address] = { codexHit: hitRate(cached, input), tokens: input };
+    for (const [address, { input, cached, at }] of Object.entries(this.codex.samples)) {
+      const timed = typeof at === "number" ? entry({ at, tokens: input }, ttlMsFor(c, "codex")) : null;
+      heat[address] = { ...timed, codexHit: hitRate(cached, input), tokens: input };
     }
     // every mod re-renders on a set, so only publish when something the drawing shows has changed
     const text = JSON.stringify(heat);
@@ -217,7 +222,7 @@ export default class CacheExpiry extends View {
     const c = conf();
     if (!c.toast) return;
     const u = this.reads.usage[address];
-    const cold = u && coldness(u, Date.now(), { ttlMs: c.ttlMinutes * 60_000, minTokens: c.minTokens });
+    const cold = u && coldness(u, Date.now(), { ttlMs: ttlMsFor(c, "claude", u), minTokens: c.minTokens });
     // one toast per cold spell: a new turn gives the terminal a new idle time
     if (!cold || this.warned[address] === cold.since) return;
     this.warned = { ...this.warned, [address]: cold.since };
@@ -242,7 +247,7 @@ export default class CacheExpiry extends View {
 
   // The dot is the focused tab's own cache; the tooltip adds the totals over every session.
   indicator(t, c) {
-    const s = summarize(this.reads.usage, Date.now(), c.ttlMinutes * 60_000);
+    const s = summarize(this.reads.usage, Date.now(), (u) => ttlMsFor(c, "claude", u));
     const terminal = focused()?.terminal ?? null;
     const mine = this.rows(c).find((r) => r.address === terminal);
     const dot = mine?.color ?? t.muted;
@@ -417,16 +422,19 @@ export default class CacheExpiry extends View {
     const minTokens = (c) => c.minTokens;
     const compactTokens = (c) => c.compactTokens;
     return v_flex().flex_1().min_h(0).px(20).pb(20).gap(2)
-      .child(div().pb(8).text_size(12.5).text_color(t.dim).child("Claude cache expiry and observed Codex cache hits."))
+      .child(div().pb(8).text_size(12.5).text_color(t.dim).child("Claude and Codex prompt-cache expiry, and observed Codex cache hits."))
       .child(this.gradient(t, c))
       .child(this.row(t, "Cooling circles", "Idle and done circles in Agent Brief cool from hot to cold.",
         this.toggle(t, "ce-circles", c.circle.enabled, flip(KEYS.circles, (s) => s.circle.enabled))))
       .child(this.row(t, "Hot colour", "A cache that was just used.", this.swatches(t, "ce-hot", HOT, c.circle.hot, KEYS.hot)))
       .child(this.row(t, "Cold colour", "A cache that has expired.", this.swatches(t, "ce-cold", COLD, c.circle.cold, KEYS.cold)))
-      .child(this.row(t, "Cold after", "Claude's prompt cache lasts one hour.",
+      .child(this.row(t, "Provider cache time",
+        "Claude: 1 h or 5 min, as each session writes it. Codex: 30 min (OpenAI's default). Off: your own time below.",
+        this.toggle(t, "ce-ttl-auto", c.ttlAuto, flip(KEYS.ttlAuto, (s) => s.ttlAuto))))
+      .when(!c.ttlAuto, (el) => el.child(this.row(t, "Cold after", "Your own time, for every Claude and Codex session.",
         this.stepper(t, "ce-ttl", `${c.ttlMinutes} min`,
           step(KEYS.ttl, ttl, -1, LIMITS.ttlMinutes, minutes),
-          step(KEYS.ttl, ttl, 1, LIMITS.ttlMinutes, minutes))))
+          step(KEYS.ttl, ttl, 1, LIMITS.ttlMinutes, minutes)))))
       .child(this.row(t, "Toast on a cold tab", "Names the space and tab when you switch to it.",
         this.toggle(t, "ce-toast", c.toast, flip(KEYS.toast, (s) => s.toast))))
       .child(this.row(t, "Toast stays", null,
@@ -455,7 +463,7 @@ export default class CacheExpiry extends View {
       ))
       .child(h_flex().text_size(11).text_color(t.dim)
         .child(div().flex_1().child("just used"))
-        .child(div().child(`cold at ${c.ttlMinutes} min`)));
+        .child(div().child(c.ttlAuto ? "cold when the provider's cache expires" : `cold at ${c.ttlMinutes} min`)));
   }
 
   row(t, title, about, control) {

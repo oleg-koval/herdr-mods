@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read cache counts from rollouts held open by the current local Codex processes."""
 
+from datetime import datetime
 import json
 from pathlib import Path
 import re
@@ -32,6 +33,15 @@ def rollout_paths(fields, sessions):
                 paths.setdefault(pid, set()).add(path)
     return paths
 
+
+def epoch_ms(stamp):
+    """Milliseconds since the epoch for an ISO 8601 time such as 2026-11-24T12:34:30.789Z; None if not one."""
+    if not isinstance(stamp, str):
+        return None
+    try:
+        return int(datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return None
 
 def last_usage(path, sessions):
     try:
@@ -67,7 +77,8 @@ def last_usage(path, sessions):
         if isinstance(usage, dict):
             total, cached = usage.get("input_tokens"), usage.get("cached_input_tokens")
             if type(total) is int and type(cached) is int and 0 < total < 2**53 and 0 <= cached <= total:
-                return {"input": total, "cached": cached}
+                at = epoch_ms(event.get("timestamp"))
+                return {"input": total, "cached": cached, **({"at": at} if at else {})}
     return None
 
 
