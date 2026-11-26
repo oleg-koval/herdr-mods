@@ -8,12 +8,14 @@ export function codexSamples(agents, terminals, localSamples = {}) {
     const session = labels[address]?.["codex.cache.session"];
     const report = labels[address]?.["codex.cache.usage"];
     if (typeof session !== "string" || !session || typeof report !== "string") continue;
-    const match = /^([0-9a-f-]+):([0-9]+):([0-9]+)$/i.exec(report);
+    // session:input:cached[:at], at (ms) added by newer hooks
+    const match = /^([0-9a-f-]+):([0-9]+):([0-9]+)(?::([0-9]+))?$/i.exec(report);
     if (!match || match[1] !== session) continue;
     const input = Number(match[2]);
     const cached = Number(match[3]);
+    const at = match[4] === undefined ? null : Number(match[4]);
     if (Number.isSafeInteger(input) && Number.isSafeInteger(cached) && input > 0 && cached <= input) {
-      samples[address] = { input, cached };
+      samples[address] = Number.isSafeInteger(at) && at > 0 ? { input, cached, at } : { input, cached };
     }
   }
   return { count: codex.length, samples };

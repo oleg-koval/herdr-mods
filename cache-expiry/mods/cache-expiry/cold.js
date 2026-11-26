@@ -1,7 +1,21 @@
 // Pure: how warm a Claude conversation's prompt cache still is. Same maths as stale-cache-nudge.sh.
 
+// Each provider's own cache lifetime, used unless "Provider cache time" is turned off.
+// Claude writes its cache for 1 h or 5 min and says which in every request's usage
+// (cache_creation.ephemeral_1h_input_tokens / ephemeral_5m_input_tokens); before a session has
+// shown either, it counts as 1 h. OpenAI keeps a prefix at least 30 min after its last use on
+// GPT-5.6 and later ("30m" default) and typically about 30 min on GPT-5.5:
+// https://developers.openai.com/api/docs/guides/prompt-caching
+export const PROVIDER_TTL_MS = Object.freeze({
+  claude1h: 60 * 60_000,
+  claude5m: 5 * 60_000,
+  claudeUnknown: 60 * 60_000,
+  codex: 30 * 60_000,
+});
+
 export const DEFAULTS = Object.freeze({
-  ttlMinutes: 55, // just under the 1 h prompt-cache TTL: the cache is cold from here on
+  ttlAuto: true, // each provider's own cache time; off uses ttlMinutes for every session
+  ttlMinutes: 55, // the manual time, when ttlAuto is off
   minTokens: 80_000, // below this a rewrite is not worth a warning
   compactTokens: 200_000, // a conversation this big gets a Compact button
   toast: true,
@@ -11,6 +25,7 @@ export const DEFAULTS = Object.freeze({
 
 /** The shared keys the settings dialog and Settings > Mods write; mod.json declares the same ones. */
 export const KEYS = Object.freeze({
+  ttlAuto: "cache-expiry.ttlAuto",
   ttl: "cache-expiry.ttl",
   minTokens: "cache-expiry.minTokens",
   compactTokens: "cache-expiry.compactTokens",
@@ -45,6 +60,7 @@ export function readSettings(get) {
   const bool = (v, d) => (typeof v === "boolean" ? v : d);
   const hex = (v, d) => (typeof v === "string" && HEX.test(v) ? v : d);
   return {
+    ttlAuto: bool(get(KEYS.ttlAuto), DEFAULTS.ttlAuto),
     ttlMinutes: inRange(durationMinutes(get(KEYS.ttl)), DEFAULTS.ttlMinutes, LIMITS.ttlMinutes),
     minTokens: inRange(get(KEYS.minTokens), DEFAULTS.minTokens, LIMITS.minTokens),
     compactTokens: inRange(get(KEYS.compactTokens), DEFAULTS.compactTokens, LIMITS.compactTokens),
@@ -92,9 +108,22 @@ export function stepped(value, delta, { min, max }) {
   return Math.min(max, Math.max(min, value + delta));
 }
 
-/** The newest assistant turn in a transcript tail: { at: ms, tokens } or null. */
+/** The cache lifetime one Claude request wrote, from its usage; null when it wrote none. */
+export function writtenTtlMs(usage) {
+  const c = usage?.cache_creation;
+  if (!c || typeof c !== "object") return null;
+  if (c.ephemeral_1h_input_tokens > 0) return PROVIDER_TTL_MS.claude1h;
+  if (c.ephemeral_5m_input_tokens > 0) return PROVIDER_TTL_MS.claude5m;
+  return null;
+}
+
+/**
+ * The newest assistant turn in a transcript tail: { at: ms, tokens, ttlMs } or null. ttlMs is the
+ * lifetime of the newest cache write (a turn that only reads keeps it), null when none is in the tail.
+ */
 export function lastUsage(tail) {
   let last = null;
+  let ttlMs = null;
   for (const line of String(tail).split("\n")) {
     if (!line.includes('"usage"')) continue;
     let row;
@@ -106,9 +135,17 @@ export function lastUsage(tail) {
     const u = row?.message?.role === "assistant" ? row.message.usage : null;
     const at = Date.parse(row?.timestamp ?? "");
     if (!u || Number.isNaN(at)) continue;
+    ttlMs = writtenTtlMs(u) ?? ttlMs;
     last = { at, tokens: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) };
   }
-  return last;
+  return last && { ...last, ttlMs };
+}
+
+/** The cache lifetime to count a session against: the manual time, else its provider's own. */
+export function ttlMsFor(settings, app, usage) {
+  if (!settings.ttlAuto) return settings.ttlMinutes * 60_000;
+  if (app === "codex") return PROVIDER_TTL_MS.codex;
+  return usage?.ttlMs ?? PROVIDER_TTL_MS.claudeUnknown;
 }
 
 /** 0 when the newest turn just finished, 1 once it is ttlMs old; null when there is no usage. */
@@ -162,12 +199,15 @@ export function keepOnly(state, addresses) {
   return { usage: pick(state.usage), seqs: pick(state.seqs) };
 }
 
-/** { cold, warm, nextColdMin } over every tracked cache; nextColdMin is null when none is warm. */
-export function summarize(usage, now, ttlMs) {
-  const idles = Object.values(usage).map((u) => now - u.at);
-  const left = idles.filter((idle) => idle < ttlMs).map((idle) => Math.ceil((ttlMs - idle) / 60_000));
+/**
+ * { cold, warm, nextColdMin } over every tracked cache, each against its own lifetime
+ * (`ttlOf(usage)`); nextColdMin is null when none is warm.
+ */
+export function summarize(usage, now, ttlOf) {
+  const left = Object.values(usage).map((u) => ttlOf(u) - (now - u.at)).filter((ms) => ms > 0)
+    .map((ms) => Math.ceil(ms / 60_000));
   return {
-    cold: idles.length - left.length,
+    cold: Object.keys(usage).length - left.length,
     warm: left.length,
     nextColdMin: left.length ? Math.min(...left) : null,
   };

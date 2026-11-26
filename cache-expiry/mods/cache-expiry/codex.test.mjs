@@ -36,3 +36,12 @@ test("local samples fill missing reports and a valid hook report takes priority"
     count: 2, samples: { t1: { input: 100, cached: 0 }, t2: { input: 50, cached: 25 } },
   });
 });
+
+test("a report with the request time carries it; a bad time is dropped", () => {
+  const agents = [agent("t1"), agent("t2")];
+  const terminals = [terminal("t1", "abc", "abc:100:40:1795600000000"), terminal("t2", "abc", "abc:100:40:0")];
+  assert.deepEqual(codexSamples(agents, terminals).samples, {
+    t1: { input: 100, cached: 40, at: 1795600000000 },
+    t2: { input: 100, cached: 40 },
+  });
+});

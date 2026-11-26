@@ -15,17 +15,27 @@ export function idleText(minutes) {
   return `${Math.floor(minutes / (24 * 60))}d`;
 }
 
-function claudeRow(h, now, ttlMs) {
-  if (typeof h?.at !== "number") return { temp: null, detail: "no turn recorded yet" };
+// Against the session's own cache lifetime (heat's ttlMs), or `fallbackMs` for heat published
+// before it carried one.
+function timedRow(h, now, fallbackMs) {
+  const ttlMs = typeof h.ttlMs === "number" ? h.ttlMs : fallbackMs;
   const temp = heatOf({ at: h.at }, now, ttlMs);
   const idleMin = Math.floor((now - h.at) / 60_000);
   const left = Math.ceil((ttlMs - (now - h.at)) / 60_000);
   return { temp, detail: temp < 1 ? `warm · cold in ${idleText(left)}` : `cold · idle ${idleText(idleMin)}` };
 }
 
-function codexRow(h) {
+function claudeRow(h, now, fallbackMs) {
+  if (typeof h?.at !== "number") return { temp: null, detail: "no turn recorded yet" };
+  return timedRow(h, now, fallbackMs);
+}
+
+// Timed when the sample says when the request ran; else the cache-hit rate, as before.
+function codexRow(h, now, fallbackMs) {
   if (typeof h?.codexHit !== "number") return { temp: null, detail: "no cache sample yet" };
-  return { temp: 1 - h.codexHit / 100, detail: `${h.codexHit}% cached on the last request` };
+  if (typeof h.at !== "number") return { temp: 1 - h.codexHit / 100, detail: `${h.codexHit}% cached on the last request` };
+  const timed = timedRow(h, now, fallbackMs);
+  return { temp: timed.temp, detail: `${timed.detail} · ${h.codexHit}% cached` };
 }
 
 /** "246k" */
@@ -36,7 +46,7 @@ export function sessionRows(agents, heat, now, { ttlMinutes, hot, cold, compactT
   const ttlMs = ttlMinutes * 60_000;
   const rows = agents.filter((a) => a.app in APPS).map((a) => {
     const h = heat?.[a.address];
-    const { temp, detail } = a.app === "codex" ? codexRow(h) : claudeRow(h, now, ttlMs);
+    const { temp, detail } = a.app === "codex" ? codexRow(h, now, ttlMs) : claudeRow(h, now, ttlMs);
     // Context: the input of the newest request (Claude: input + cache reads + cache writes).
     const context = typeof h?.tokens === "number" ? h.tokens : null;
     return {

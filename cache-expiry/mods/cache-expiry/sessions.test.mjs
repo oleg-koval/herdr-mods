@@ -52,3 +52,18 @@ test("rowsSummary counts warm, cold and unsampled", () => {
   assert.equal(rowsSummary([{ temp: 0.2 }, { temp: 1 }, { temp: null }]), "1 warm · 1 cold · 1 unsampled");
   assert.equal(rowsSummary([{ temp: 0.2 }]), "1 warm · 0 cold");
 });
+
+test("sessionRows: each session's own cache lifetime; a timed Codex sample cools with time", () => {
+  const MIN = 60_000;
+  const rows = sessionRows([agent("short", "claude-code"), agent("long", "claude-code"), agent("cx", "codex")], {
+    short: { at: now - 10 * MIN, tokens: 1, ttlMs: 5 * MIN },
+    long: { at: now - 10 * MIN, tokens: 1, ttlMs: 60 * MIN },
+    cx: { at: now - 15 * MIN, tokens: 1, ttlMs: 30 * MIN, codexHit: 97 },
+  }, now, opts);
+  const by = Object.fromEntries(rows.map((r) => [r.address, r]));
+  assert.equal(by.short.temp, 1);
+  assert.equal(by.short.detail, "cold · idle 10m");
+  assert.equal(by.long.detail, "warm · cold in 50m");
+  assert.equal(by.cx.temp, 0.5);
+  assert.equal(by.cx.detail, "warm · cold in 15m · 97% cached");
+});
