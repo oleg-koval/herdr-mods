@@ -1,12 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { handoverPaths, sessionKey, parseMeta, handoverState, handoverPrompt, applyPrompt, stamp } from "./handover.js";
+import {
+  handoverPaths, sessionKey, parseMeta, handoverState, handoverPrompt, applyPrompt, stamp, delivered, parseProbe, CLEAR_SETTLE_MS,
+  lockIsLive, APPLY_LOCK_MS,
+} from "./handover.js";
 
 test("handoverPaths keeps every file under one state folder", () => {
   assert.deepEqual(handoverPaths("/h", "t7c"), {
     dir: "/h/.local/state/herdr-handover",
     md: "/h/.local/state/herdr-handover/t7c.md",
     meta: "/h/.local/state/herdr-handover/t7c.json",
+    lock: "/h/.local/state/herdr-handover/t7c.applying",
     applied: "/h/.local/state/herdr-handover/applied",
   });
 });
@@ -26,13 +30,50 @@ test("parseMeta rejects junk", () => {
 
 test("handoverState: requested, saved, then ready once cleared", () => {
   const meta = { requested_at: 1, session: "a" };
-  assert.deepEqual(handoverState(null, true, "a"), { requested: false, saved: false, cleared: false, ready: false });
-  assert.deepEqual(handoverState(meta, false, "a"), { requested: true, saved: false, cleared: false, ready: false });
-  assert.deepEqual(handoverState(meta, true, "a"), { requested: false, saved: true, cleared: false, ready: false });
-  assert.deepEqual(handoverState(meta, true, "b"), { requested: false, saved: true, cleared: true, ready: true });
-  assert.equal(handoverState({ requested_at: 1, session: null }, true, "b").ready, false);
-  assert.equal(handoverState({ requested_at: 1, session: null, cleared_at: 2 }, true, null).ready, true);
-  assert.equal(handoverState({ requested_at: 1, session: "a" }, true, null).ready, false);
+  const none = { requested: false, saved: false, cleared: false, clearing: false, applying: false, ready: false };
+  assert.deepEqual(handoverState(null, true, "a", 0), none);
+  assert.deepEqual(handoverState(meta, false, "a", 0), { ...none, requested: true });
+  assert.deepEqual(handoverState(meta, true, "a", 0), { ...none, saved: true });
+  assert.deepEqual(handoverState(meta, true, "b", 0), { ...none, saved: true, cleared: true, ready: true });
+  assert.equal(handoverState({ requested_at: 1, session: null }, true, "b", 0).ready, false);
+  assert.equal(handoverState({ requested_at: 1, session: "a" }, true, null, 0).ready, false);
+});
+
+test("handoverState: a Clear from the dialog counts only after the settle time", () => {
+  const meta = { requested_at: 1, session: null, cleared_at: 1_000 };
+  const early = handoverState(meta, true, null, 1_000 + CLEAR_SETTLE_MS - 1);
+  assert.deepEqual([early.ready, early.clearing], [false, true]);
+  const late = handoverState(meta, true, null, 1_000 + CLEAR_SETTLE_MS);
+  assert.deepEqual([late.ready, late.clearing], [true, false]);
+  // A relabelled conversation is proof the new one started, so it does not wait.
+  assert.equal(handoverState({ ...meta, session: "a" }, true, "b", 1_000).ready, true);
+});
+
+test("handoverState: an apply in progress keeps play off", () => {
+  const s = handoverState({ requested_at: 1, session: "a" }, true, "b", 0, true);
+  assert.deepEqual([s.cleared, s.applying, s.ready], [true, true, false]);
+});
+
+test("lockIsLive: a fresh lock guards, a minute-old one is left over", () => {
+  assert.equal(lockIsLive(100, 100_000 + APPLY_LOCK_MS - 1), true);
+  assert.equal(lockIsLive(100, 100_000 + APPLY_LOCK_MS), false);
+  assert.equal(lockIsLive(Number.NaN, 0), false);
+});
+
+test("delivered: a new turn or a working session, never a missing probe", () => {
+  assert.equal(delivered({ turn: 10, state: "idle" }, { turn: 10, state: "idle" }), false);
+  assert.equal(delivered({ turn: 10, state: "idle" }, { turn: 11, state: "idle" }), true);
+  assert.equal(delivered({ turn: 10, state: "idle" }, { turn: 10, state: "working" }), true);
+  assert.equal(delivered(null, { turn: 10, state: "working" }), true);
+  assert.equal(delivered(null, { turn: 11, state: "idle" }), false);
+  assert.equal(delivered({ turn: 10, state: "idle" }, null), false);
+});
+
+test("parseProbe reads turn and status from hc get --json", () => {
+  assert.deepEqual(parseProbe('{"turn":11,"status":{"app":"codex","state":"idle"}}'), { turn: 11, state: "idle" });
+  assert.deepEqual(parseProbe('{"turn":3}'), { turn: 3, state: null });
+  assert.equal(parseProbe("nope"), null);
+  assert.equal(parseProbe('{"status":{}}'), null);
 });
 
 test("prompts name the file", () => {

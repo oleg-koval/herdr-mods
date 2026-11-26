@@ -359,15 +359,22 @@ export default class CacheExpiry extends View {
     });
   }
 
-  // Gray until a saved handover exists and the conversation was cleared after it.
+  // Gray until a saved handover exists and the fresh conversation has started. Pressing it goes to
+  // the tab, so a prompt the session drops is seen at once rather than found later.
   applyButton(t, r, h) {
     const tip = !h?.saved ? "Apply a handover: save one first"
+      : h.applying ? "Applying: waiting for the session to pick it up"
+      : h.clearing ? "Waiting for the fresh conversation to start"
       : !h.cleared ? "Apply a handover: clear the session first"
       : !r.clearable ? `Busy (${r.status}): apply once it is idle`
       : "Apply the saved handover to this fresh session";
     return this.iconButton(t, `ce-apply-${r.address}`, "apply", {
       enabled: Boolean(h?.ready) && r.clearable, lit: Boolean(h?.ready), tip,
-      onClick: (_e, cx) => { this.act(r, "apply", () => applyHandover(r.address)); cx.notify(); },
+      onClick: () => {
+        run("agent.focus", { terminal: r.address });
+        closeOverlay(this.overlay);
+        this.act(r, "apply", () => applyHandover(r.address));
+      },
     });
   }
 
@@ -375,7 +382,7 @@ export default class CacheExpiry extends View {
     const verb = { handover: "handover requested", apply: "handover applied", clear: "cleared", compact: "compacting" }[what];
     const body = {
       handover: (path) => `It is writing ${path}. Clear it once that is done, then press play.`,
-      apply: (path) => `Sent ${path} to the fresh session.`,
+      apply: (path) => `The fresh session picked up ${path}.`,
       clear: () => `Sent ${r.clear}. Its next prompt starts from an empty context.`,
       compact: () => `Sent /compact to ${kTokens(r.context)} of context.`,
     }[what];

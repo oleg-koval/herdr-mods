@@ -4,14 +4,24 @@
 //   saved:     both exist; ready once the conversation was cleared after the request
 // "Cleared" means the conversation id on the terminal changed since the request (Claude's
 // SessionStart hook relabels claude.session on /clear; the Codex hook relabels
-// codex.cache.session), or this mod's Clear button marked it.
+// codex.cache.session), or this mod's Clear button marked it at least CLEAR_SETTLE_MS ago.
+// The settle time exists because hc send returns once /clear or /new is typed, not once the
+// program has started the new conversation; text pasted during that start is dropped.
 
 export const HANDOVER_DIR = ".local/state/herdr-handover";
 export const SHARED_KEY = "cache-expiry.handover";
+export const CLEAR_SETTLE_MS = 10_000;
+// An apply holds a lock directory while it waits for the session; one older than this is left over
+// from a Herdr that quit mid-apply and is ignored.
+export const APPLY_LOCK_MS = 60_000;
+export const DELIVERY_MS = 15_000;
 
 export function handoverPaths(home, address) {
   const dir = `${home}/${HANDOVER_DIR}`;
-  return { dir, md: `${dir}/${address}.md`, meta: `${dir}/${address}.json`, applied: `${dir}/applied` };
+  return {
+    dir, md: `${dir}/${address}.md`, meta: `${dir}/${address}.json`, lock: `${dir}/${address}.applying`,
+    applied: `${dir}/applied`,
+  };
 }
 
 /** The conversation id a terminal's hooks put on it, or null. */
@@ -29,13 +39,36 @@ export function parseMeta(text) {
   }
 }
 
-/** { requested, saved, cleared, ready } for one terminal. */
-export function handoverState(meta, mdExists, key) {
-  if (!meta) return { requested: false, saved: false, cleared: false, ready: false };
-  const cleared = typeof meta.cleared_at === "number" ||
-    (Boolean(meta.session) && Boolean(key) && key !== meta.session);
+/** True while a lock made at `mtimeSec` (stat's seconds) still guards an apply at `now` (ms). */
+export function lockIsLive(mtimeSec, now) {
+  return Number.isFinite(mtimeSec) && now - mtimeSec * 1000 < APPLY_LOCK_MS;
+}
+
+/** { requested, saved, cleared, clearing, applying, ready } for one terminal at time `now` (ms). */
+export function handoverState(meta, mdExists, key, now, applying = false) {
+  if (!meta) return { requested: false, saved: false, cleared: false, clearing: false, applying, ready: false };
+  const relabelled = Boolean(meta.session) && Boolean(key) && key !== meta.session;
+  const marked = typeof meta.cleared_at === "number";
+  const settled = marked && now - meta.cleared_at >= CLEAR_SETTLE_MS;
+  const cleared = relabelled || settled;
   const saved = Boolean(mdExists);
-  return { requested: !saved, saved, cleared, ready: saved && cleared };
+  return { requested: !saved, saved, cleared, clearing: marked && !cleared, applying, ready: saved && cleared && !applying };
+}
+
+/** True once the session reacted to a sent prompt: a new turn, or it is working on one. */
+export function delivered(before, after) {
+  if (!after) return false;
+  return after.state === "working" || (Boolean(before) && after.turn > before.turn);
+}
+
+/** { turn, state } from `hc get --json` output, or null. */
+export function parseProbe(text) {
+  try {
+    const t = JSON.parse(text);
+    return typeof t?.turn === "number" ? { turn: t.turn, state: t.status?.state ?? null } : null;
+  } catch {
+    return null;
+  }
 }
 
 export function handoverPrompt(path) {
