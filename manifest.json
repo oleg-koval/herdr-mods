@@ -1,0 +1,12 @@
+{
+  "before": "a6d4761ea422d9644b7187164bed46e814c190f4",
+  "after": "f1b3b211d6df1ae6c211ab47460ec331c11b702f",
+  "parts": [
+    {
+      "name": "Spaces sidebar plus button and New space dialog",
+      "desktop_before": "new-space-desktop-before.png",
+      "desktop_after": "new-space-desktop-after.png",
+      "mobile_applicable": false
+    }
+  ]
+}
