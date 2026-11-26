@@ -363,6 +363,7 @@ export default class CacheExpiry extends View {
   // the tab, so a prompt the session drops is seen at once rather than found later.
   applyButton(t, r, h) {
     const tip = !h?.saved ? "Apply a handover: save one first"
+      : h.applying ? "Applying: waiting for the session to pick it up"
       : h.clearing ? "Waiting for the fresh conversation to start"
       : !h.cleared ? "Apply a handover: clear the session first"
       : !r.clearable ? `Busy (${r.status}): apply once it is idle`

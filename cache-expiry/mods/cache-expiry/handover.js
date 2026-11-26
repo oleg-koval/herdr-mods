@@ -11,10 +11,17 @@
 export const HANDOVER_DIR = ".local/state/herdr-handover";
 export const SHARED_KEY = "cache-expiry.handover";
 export const CLEAR_SETTLE_MS = 10_000;
+// An apply holds a lock directory while it waits for the session; one older than this is left over
+// from a Herdr that quit mid-apply and is ignored.
+export const APPLY_LOCK_MS = 60_000;
+export const DELIVERY_MS = 15_000;
 
 export function handoverPaths(home, address) {
   const dir = `${home}/${HANDOVER_DIR}`;
-  return { dir, md: `${dir}/${address}.md`, meta: `${dir}/${address}.json`, applied: `${dir}/applied` };
+  return {
+    dir, md: `${dir}/${address}.md`, meta: `${dir}/${address}.json`, lock: `${dir}/${address}.applying`,
+    applied: `${dir}/applied`,
+  };
 }
 
 /** The conversation id a terminal's hooks put on it, or null. */
@@ -32,15 +39,20 @@ export function parseMeta(text) {
   }
 }
 
-/** { requested, saved, cleared, clearing, ready } for one terminal at time `now` (ms). */
-export function handoverState(meta, mdExists, key, now) {
-  if (!meta) return { requested: false, saved: false, cleared: false, clearing: false, ready: false };
+/** True while a lock made at `mtimeSec` (stat's seconds) still guards an apply at `now` (ms). */
+export function lockIsLive(mtimeSec, now) {
+  return Number.isFinite(mtimeSec) && now - mtimeSec * 1000 < APPLY_LOCK_MS;
+}
+
+/** { requested, saved, cleared, clearing, applying, ready } for one terminal at time `now` (ms). */
+export function handoverState(meta, mdExists, key, now, applying = false) {
+  if (!meta) return { requested: false, saved: false, cleared: false, clearing: false, applying, ready: false };
   const relabelled = Boolean(meta.session) && Boolean(key) && key !== meta.session;
   const marked = typeof meta.cleared_at === "number";
   const settled = marked && now - meta.cleared_at >= CLEAR_SETTLE_MS;
   const cleared = relabelled || settled;
   const saved = Boolean(mdExists);
-  return { requested: !saved, saved, cleared, clearing: marked && !cleared, ready: saved && cleared };
+  return { requested: !saved, saved, cleared, clearing: marked && !cleared, applying, ready: saved && cleared && !applying };
 }
 
 /** True once the session reacted to a sent prompt: a new turn, or it is working on one. */

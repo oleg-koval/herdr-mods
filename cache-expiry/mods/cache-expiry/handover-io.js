@@ -4,6 +4,7 @@
 import { exec, home, readTextFile, writeTextFile, terminals } from "herdr";
 import {
   handoverPaths, sessionKey, parseMeta, handoverState, handoverPrompt, applyPrompt, stamp, delivered, parseProbe,
+  lockIsLive, DELIVERY_MS,
 } from "./handover.js";
 
 const labelsOf = (address) => terminals().find((t) => t.address === address)?.labels ?? {};
@@ -30,7 +31,10 @@ export async function scanHandovers(addresses) {
     if (!names.has(`${address}.json`)) continue;
     const paths = handoverPaths(home(), address);
     const meta = parseMeta(await readTextFile(paths.meta).catch(() => null));
-    if (meta) states[address] = handoverState(meta, names.has(`${address}.md`), sessionKey(labelsOf(address)), Date.now());
+    const applying = names.has(`${address}.applying`) && await liveLock(paths.lock);
+    if (meta) {
+      states[address] = handoverState(meta, names.has(`${address}.md`), sessionKey(labelsOf(address)), Date.now(), applying);
+    }
   }
   return states;
 }
@@ -52,36 +56,55 @@ export async function markCleared(address) {
   if (meta) await writeMeta(paths.meta, { ...meta, cleared_at: Date.now() });
 }
 
-const DELIVERY_CHECKS = 15;
+async function liveLock(path) {
+  const result = await exec("stat", ["-f", "%m", path], { timeout: 5_000 }).catch(() => null);
+  return result?.code === 0 && lockIsLive(Number(result.stdout.trim()), Date.now());
+}
 
-async function probe(address) {
-  const result = await exec("hc", ["get", address, "--json"], { timeout: 5_000 }).catch(() => null);
+// mkdir is atomic, so only one apply per terminal gets the lock; a stale one is replaced once.
+async function takeLock(path) {
+  if ((await exec("mkdir", [path])).code === 0) return true;
+  if (await liveLock(path)) return false;
+  await exec("rmdir", [path]);
+  return (await exec("mkdir", [path])).code === 0;
+}
+
+async function probe(address, timeout) {
+  const result = await exec("hc", ["get", address, "--json"], { timeout }).catch(() => null);
   return result?.code === 0 ? parseProbe(result.stdout) : null;
 }
 
-// One check a second; resolves true as soon as the session reacts, false after `left` checks.
-async function awaitDelivery(address, before, left) {
-  if (left <= 0) return false;
+// One check a second until the session reacts (true) or the deadline passes (false).
+async function awaitDelivery(address, before, deadline) {
   await exec("sleep", ["1"]);
-  return delivered(before, await probe(address)) || awaitDelivery(address, before, left - 1);
+  const left = deadline - Date.now();
+  if (left <= 0) return false;
+  return delivered(before, await probe(address, Math.min(5_000, left))) || awaitDelivery(address, before, deadline);
 }
 
-/** Hands the handover to the fresh session; files it under applied/ only once the session reacted. */
-export async function applyHandover(address) {
-  const paths = handoverPaths(home(), address);
+// The archived copy is never deleted: a prompt that lands after the deadline still needs its file.
+async function deliver(paths, address) {
   const archived = `${paths.applied}/${address}-${stamp(Date.now())}.md`;
   await exec("mkdir", ["-p", paths.applied]);
   const copied = await exec("cp", [paths.md, archived]);
   if (copied.code !== 0) throw new Error(copied.stderr.trim() || "the handover file is gone");
-  const before = await probe(address);
-  const discard = () => exec("rm", ["-f", archived]);
-  const ok = await send(address, applyPrompt(archived))
-    .then(() => awaitDelivery(address, before, DELIVERY_CHECKS))
-    .catch(async (error) => { await discard(); throw error; });
-  if (!ok) {
-    await discard();
-    throw new Error("The session did not pick up the prompt. The handover is kept: press play again.");
+  const before = await probe(address, 5_000);
+  await send(address, applyPrompt(archived));
+  if (!(await awaitDelivery(address, before, Date.now() + DELIVERY_MS))) {
+    throw new Error("The session did not react within 15 s. The handover is kept; check the tab before pressing play again.");
   }
-  await exec("rm", ["-f", paths.md, paths.meta]);
+  const removed = await exec("rm", ["-f", paths.md, paths.meta]);
+  if (removed.code !== 0) throw new Error(`Applied, but the handover could not be removed: ${removed.stderr.trim()}`);
   return archived;
+}
+
+/** Hands the handover to the fresh session; it counts as applied only once the session reacted. */
+export async function applyHandover(address) {
+  const paths = handoverPaths(home(), address);
+  if (!(await takeLock(paths.lock))) throw new Error("A handover is already being applied to this tab.");
+  try {
+    return await deliver(paths, address);
+  } finally {
+    await exec("rmdir", [paths.lock]);
+  }
 }
