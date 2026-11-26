@@ -13,5 +13,17 @@ Copy each folder under [mods](mods/) into your Herdr app's `mods/` directory. Fo
 - `fielddesk-tab-menu` is a tab right-click menu: Rename, New tab, Fork session and Close. Fork session appears on a tab with a Claude session and opens the `thread-fork` dialog for it (install that mod too). Herdr's tab strip always opens its own `menu`, so point a tab strip's right-click at `fielddesk-tab-menu`: clone `tabs` with `herdr-app do mod.clone` and change the popup's `mod`.
 - `fielddesk-handoff` shows session context and copies a handoff note on request. It reads the `herdr.context` terminal label by default. Set `herdr_context_label` in Herdr's `settings.json` to use an existing label.
 - `fielddesk-spaces` replaces Herdr's built-in `spaces` block (`"content": { "mod": "fielddesk-spaces" }` in the layout). Each space expands to its tabs; the header has a select-all box and one Expand all / Collapse all button, and a box appears on a row's avatar on hover. With spaces selected, a bar offers Rename (prefix and suffix), Merge (every tab of the other spaces moves into the first selected one, by parking each terminal and labelling it into that space, so programs keep running but split layouts are not kept) and Close. Merge and Close ask first through Herdr's `confirm` mod with space, tab and live-agent counts. It leaves out the built-in's machine groups, worktree nesting, drag reordering and rail mode.
+- The spaces header's `+` opens New space (right-click it for a blank space; `fielddesk-spaces.new` opens it from a key). Type a name, search your GitHub repos through `gh` (cached 6 hours in `~/.cache/fielddesk/repos.json`), type or paste a first message and drop or paste files, then pick the agent by its logo. Create opens the space in the repo's checkout, or clones it first; with no repo it starts in `~/.herdr/threads`. Terminal starts a plain shell and sends nothing. Which repos and folders is set in Herdr's `settings.json`; without it you get your own repos, found in and cloned to `~/code`:
+
+  ```json
+  "fielddesk_repos": {
+    "owners": ["my-org", "my-user"],
+    "scan": ["~/code", "~/work"],
+    "cloneDir": "~/code",
+    "roots": { "my-org": "~/work" }
+  }
+  ```
+
+  `owners`: users or orgs to list. `scan`: folders whose subfolders are checked for a clone. `cloneDir`: where a missing repo is cloned, as `<cloneDir>/<repo>`. `roots`: a clone folder per owner.
 
 Verify a live agent can be reached from the queue, a named task opens the expected worktree, and the Jev dot has a status tooltip.

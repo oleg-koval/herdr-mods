@@ -10,6 +10,7 @@ import {
   toggleExpanded, toggleSelected,
 } from "./plan.js";
 import { moveTerminals, stillOpen } from "./move.js";
+import { CreateSpace } from "./create.js";
 
 const SELECTED = "fielddesk-spaces.selected";
 const EXPANDED = "fielddesk-spaces.expanded";
@@ -19,6 +20,8 @@ const PENDING = "fielddesk-spaces.pending";
 const PENDING_MAX_MS = 10 * 60 * 1000;
 
 const icon = (name) => svg(`mods/workspace-chrome/${name}.svg`);
+// The New space dialog sizes itself to its content; only the width is fixed.
+export const openCreate = () => openOverlay({ mod: "fielddesk-spaces", kind: "dialog", width: 560, props: { view: "create" } });
 const io = {
   run, hc, panes, spaces,
   sleep: (ms) => exec("sleep", [String(ms / 1000)]),
@@ -42,6 +45,10 @@ function textButton(t, id, label, click, { disabled = false, danger = false } = 
 
 export default class FielddeskSpaces extends View {
   init(_props, cx) {
+    if (props()?.view === "create") {
+      this.create = new CreateSpace();
+      return this.create.init(_props, cx);
+    }
     this.rename = props()?.view === "rename";
     this.hover = null;
     this.busy = null;
@@ -53,13 +60,15 @@ export default class FielddeskSpaces extends View {
     cx.spawn(async (cx) => {
       for (;;) {
         const command = await nextCommand();
-        if (command === "merge") await this.applyMerge(cx);
+        if (command === "new") openCreate();
+        else if (command === "merge") await this.applyMerge(cx);
         else if (command === "close") this.applyClose(cx);
       }
     });
   }
 
   async close() {
+    this.create?.closing();
     this.prefix?.release();
     this.suffix?.release();
   }
@@ -141,9 +150,11 @@ export default class FielddeskSpaces extends View {
         setShared(EXPANDED, allToggleLabel(expanded, all) === "Collapse all" ? {} : expandAll(all));
         cx.notify();
       }))
-      .child(h_flex().id("fielddesk-spaces-new").role("button").accessibility_label("New space").tooltip("New space").size(24).flex_none()
+      .child(h_flex().id("fielddesk-spaces-new").role("button").accessibility_label("New space").tooltip("New space (right-click: blank)").size(24).flex_none()
         .items_center().justify_center().rounded(5).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
-        .on_click(() => run("space.new")).child(icon("plus").size(14)));
+        .on_click(() => openCreate())
+        .on_mouse_down("right", () => run("space.new"))
+        .child(icon("plus").size(14)));
   }
 
   batchBar(t, all, picked) {
@@ -279,6 +290,7 @@ export default class FielddeskSpaces extends View {
   }
 
   render() {
+    if (this.create) return this.create.render();
     if (this.rename) return this.renderRename();
     const t = theme();
     const all = spaces();
