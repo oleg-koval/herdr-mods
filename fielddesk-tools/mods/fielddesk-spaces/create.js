@@ -6,16 +6,19 @@
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import {
-  closeOverlay, exec, home, knownAgents, notify, pickFiles, props, readTextFile, run, setShared, shared, theme, writeTextFile,
+  appHome, closeOverlay, exec, home, knownAgents, notify, pickFiles, props, readTextFile, run, setShared, shared, theme, writeTextFile,
 } from "herdr";
 import {
-  agentTiles, composeTask, isStale, parseLocalIndex, parseRepoList, pushRecent, rankRepos, repoFolder, spaceArgs,
-  spaceName, tilde,
+  agentTiles, composeTask, isStale, listCommands, ownerRepoOf, parseLocalIndex, parseRepoList, pushRecent, rankRepos, repoConfigFrom,
+  repoFolder, scanScript, spaceArgs, spaceName, tilde,
 } from "./repos.js";
 
 const RECENT = "fielddesk-spaces.recentRepos";
+// Clone targets in progress, { folder: startedAt }, so a second dialog doesn't open an agent in a
+// half-cloned folder. An entry older than the clone timeout is a leftover and ignored.
+const CLONING = "fielddesk-spaces.cloning";
+const CLONE_TIMEOUT_MS = 10 * 60 * 1000;
 const LAST_AGENT = "fielddesk-spaces.lastAgent";
-const OWNERS = ["Teifi-Digital", "oleg-koval"];
 const RESULT_ROWS = 6;
 const cacheFile = () => `${home()}/.cache/fielddesk/repos.json`;
 // The macOS screenshot thumbnail hands over a file that goes soon after the drag, so dropped
@@ -26,9 +29,6 @@ const icon = (name) => svg(`mods/workspace-chrome/${name}.svg`);
 const baseName = (path) => path.replace(/\/+$/, "").split("/").pop() || path;
 const safeName = (name) => name.replace(/[^A-Za-z0-9._-]+/g, "-");
 
-// The main checkout of every repo in the usual folders, as "<folder>\t<origin url>\td" lines.
-// One awk over the .git/config files: a git process per folder took 4 s for 500 folders.
-const SCAN = String.raw`cd "$HOME" && awk 'FNR==1{o=0} /^\[remote "origin"\]/{o=1;next} /^\[/{o=0} o&&$1=="url"{f=FILENAME; sub(/\/\.git\/config$/,"",f); print ENVIRON["HOME"] "/" f "\t" $3 "\td"; nextfile}' Work/01_projects/*/.git/config projects/personal/active/*/.git/config code/*/.git/config 2>/dev/null; true`;
 
 // AppleScript writes the clipboard's image (a screenshot, say) to a PNG; fails when there is none.
 const pasteImageScript = (path) => [
@@ -42,14 +42,18 @@ const pasteImageScript = (path) => [
   "close access f",
 ].flatMap((line) => ["-e", line]);
 
-async function fetchRepos() {
-  const lists = await Promise.all(OWNERS.map(async (owner) => {
-    const r = await exec("gh", ["repo", "list", owner, "--limit", "1000", "--no-archived",
-      "--json", "nameWithOwner,description,pushedAt,isArchived"], { timeout: 60000 });
-    if (r.code !== 0) throw new Error(r.stderr?.trim() || `gh repo list ${owner} failed`);
+async function fetchRepos(owners) {
+  const lists = await Promise.all(listCommands(owners).map(async (args) => {
+    const r = await exec("gh", args, { timeout: 60000 });
+    if (r.code !== 0) throw new Error(r.stderr?.trim() || `gh ${args.slice(0, 3).join(" ")} failed`);
     return parseRepoList(JSON.parse(r.stdout));
   }));
   return lists.flat();
+}
+
+async function loadConfig() {
+  const text = await readTextFile(`${appHome()}/settings.json`).catch(() => null);
+  return repoConfigFrom(text, home());
 }
 
 export class CreateSpace {
@@ -65,14 +69,16 @@ export class CreateSpace {
     this.agents = agentTiles(shared("new-menu.agents")?.[""] ?? []);
     this.pick = shared(LAST_AGENT) ?? this.agents[0]?.key;
     this.busy = null;
+    this.config = repoConfigFrom(null, home());
     this.handle = cx.focus_handle();
     this.makeInputs();
     this.bindKeys(cx);
     this.name.focus();
     cx.timer.after(300, () => this.name.focus());
-    cx.spawn(async (cx) => this.loadRepos(cx));
-    this.indexed = new Promise((resolve) => cx.spawn(async (cx) => resolve(await this.loadIndex(cx))));
-    cx.spawn(async (cx) => this.loadAgents(cx));
+    const configured = loadConfig().then((config) => { this.config = config; });
+    cx.spawn(async (cx) => { await configured; await this.loadRepos(cx); });
+    this.indexed = new Promise((resolve) => cx.spawn(async (cx) => { await configured; resolve(await this.loadIndex(cx)); }));
+    this.agentsLoaded = new Promise((resolve) => cx.spawn(async (cx) => resolve(await this.loadAgents(cx))));
   }
 
   makeInputs() {
@@ -109,19 +115,20 @@ export class CreateSpace {
       text = await readTextFile(cacheFile());
       cached = JSON.parse(text ?? "null");
     } catch {}
-    if (Array.isArray(cached?.repos)) {
+    const sameOwners = JSON.stringify(cached?.owners ?? []) === JSON.stringify(this.config.owners);
+    if (sameOwners && Array.isArray(cached?.repos)) {
       this.repos = cached.repos;
       this.reposState = "ready";
       this.refreshResults();
       cx.notify();
     }
-    if (!isStale(cached?.at, Date.now())) return;
+    if (sameOwners && !isStale(cached?.at, Date.now())) return;
     try {
-      const repos = await fetchRepos();
+      const repos = await fetchRepos(this.config.owners);
       this.repos = repos;
       this.reposState = "ready";
       await exec("mkdir", ["-p", `${home()}/.cache/fielddesk`]);
-      await writeTextFile(cacheFile(), JSON.stringify({ at: Date.now(), repos }), text).catch(() => null);
+      await writeTextFile(cacheFile(), JSON.stringify({ at: Date.now(), owners: this.config.owners, repos }), text).catch(() => null);
     } catch (error) {
       if (this.reposState !== "ready") this.reposState = "failed";
       this.reposError = String(error?.message ?? error);
@@ -132,7 +139,7 @@ export class CreateSpace {
 
   async loadIndex(cx) {
     try {
-      const r = await exec("sh", ["-c", SCAN], { timeout: 20000 });
+      const r = await exec("sh", ["-c", scanScript(this.config.scan)], { timeout: 20000 });
       this.index = parseLocalIndex(r.stdout);
     } catch {}
     cx.notify();
@@ -189,8 +196,10 @@ export class CreateSpace {
         const entry = { src, path: src, name: baseName(src), copying: true };
         this.files = [...this.files, entry];
         cx.notify();
+        // Only a file is copied (a screenshot drag's file goes soon); a folder is named where it is.
         const dest = `${attachDir()}/${Date.now()}-${safeName(entry.name)}`;
-        const copied = await exec("cp", ["-R", src, dest]).then((r) => r.code === 0, () => false);
+        const isFile = await exec("test", ["-f", src]).then((r) => r.code === 0, () => false);
+        const copied = isFile && await exec("cp", [src, dest]).then((r) => r.code === 0, () => false);
         this.files = this.files.map((file) => (file === entry ? { ...file, path: copied ? dest : src, copying: false } : file));
         cx.notify();
       }
@@ -222,30 +231,33 @@ export class CreateSpace {
 
   submit(cx) {
     if (this.busy || this.files.some((file) => file.copying)) return;
-    const agent = this.agents.find((tile) => tile.key === this.pick) ?? this.agents.at(-1);
     const repo = this.repo;
     const name = spaceName(this.name.value(), repo);
     const task = composeTask(this.starter.value(), this.files);
+    const pick = this.pick;
     this.busy = "Opening…";
     cx.notify();
     cx.spawn(async (cx) => {
-      // The checkout scan may still be running: a repo it hasn't found yet would be cloned again.
-      await this.indexed;
-      const target = repo ? repoFolder(repo, this.index, home()) : { folder: threadsDir(), cloned: false };
+      // The checkout scan and the agent check may still be running: a repo the scan hasn't found
+      // would be cloned again, and an agent not yet listed would fall back to the wrong one.
+      await Promise.all([this.indexed, this.agentsLoaded]);
+      const agent = this.agents.find((tile) => tile.key === pick) ?? this.agents[0];
+      const target = repo ? repoFolder(repo, this.index, this.config) : { folder: threadsDir(), cloned: false };
       if (repo && !target.cloned) {
         this.busy = `Cloning ${repo.full}…`;
         cx.notify();
       }
-      const args = spaceArgs({ name, folder: target.folder, agent, task });
       const ready = repo
         ? await this.ensureCloned(repo, target)
         : await exec("mkdir", ["-p", target.folder]).then((r) => r.code === 0, () => false);
+      // Closed meanwhile (Esc, a click beside it): the person cancelled, so no space opens.
+      if (this.cancelled) return;
       if (!ready) {
         this.busy = null;
         cx.notify();
         return;
       }
-      run("space.new", args);
+      run("space.new", spaceArgs({ name, folder: target.folder, agent, task }));
       if (repo) setShared(RECENT, pushRecent(shared(RECENT) ?? [], repo.full));
       if (agent) setShared(LAST_AGENT, agent.key);
       closeOverlay(props().overlay);
@@ -254,13 +266,25 @@ export class CreateSpace {
 
   async ensureCloned(repo, target) {
     if (target.cloned) return true;
-    // A folder already at the clone target is used as it is, never cloned over.
+    const fail = (body) => {
+      notify({ title: `Couldn't open ${repo.full}`, body, level: "error", timeout: 8000 });
+      return false;
+    };
+    const started = shared(CLONING)?.[target.folder];
+    if (started && Date.now() - started < CLONE_TIMEOUT_MS) return fail(`It is still being cloned into ${tilde(target.folder, home())}.`);
+    // A folder already at the clone target is used only when it is this repo; never cloned over.
     const exists = await exec("test", ["-e", target.folder]).then((r) => r.code === 0, () => false);
-    if (exists) return true;
-    const r = await exec("gh", ["repo", "clone", repo.full, target.folder], { timeout: 600000 }).catch((error) => ({ code: 1, stderr: String(error) }));
-    if (r.code === 0) return true;
-    notify({ title: `Couldn't clone ${repo.full}`, body: (r.stderr ?? "").trim().split("\n").pop() || "gh repo clone failed", level: "error", timeout: 8000 });
-    return false;
+    if (exists) {
+      const origin = await exec("git", ["-C", target.folder, "remote", "get-url", "origin"]).catch(() => null);
+      const same = origin?.code === 0 && ownerRepoOf(origin.stdout) === repo.full.toLowerCase();
+      return same || fail(`${tilde(target.folder, home())} exists and is not a clone of it.`);
+    }
+    setShared(CLONING, { ...(shared(CLONING) ?? {}), [target.folder]: Date.now() });
+    const r = await exec("gh", ["repo", "clone", repo.full, target.folder], { timeout: CLONE_TIMEOUT_MS })
+      .catch((error) => ({ code: 1, stderr: String(error) }));
+    const { [target.folder]: _done, ...rest } = shared(CLONING) ?? {};
+    setShared(CLONING, rest);
+    return r.code === 0 || fail((r.stderr ?? "").trim().split("\n").pop() || "gh repo clone failed");
   }
 
   // ── render ─────────────────────────────────────────────────────────────
@@ -271,7 +295,7 @@ export class CreateSpace {
   }
 
   repoField(t) {
-    const where = this.repo ? repoFolder(this.repo, this.index, home()) : null;
+    const where = this.repo ? repoFolder(this.repo, this.index, this.config) : null;
     return h_flex().h(32).gap(8).items_center()
       .child(icon(this.repo ? "git-branch" : "search").size(14).flex_none().text_color(this.repo ? t.foreground : t.dim))
       .child(div().flex_1().min_w(0).child(Input.new(this.query).h(30).px(0).border_0().bg(t.popover).text_size(13).text_color(t.foreground)))
@@ -289,7 +313,7 @@ export class CreateSpace {
 
   resultRow(t, repo, i) {
     const on = i === this.sel;
-    const where = repoFolder(repo, this.index, home());
+    const where = repoFolder(repo, this.index, this.config);
     return h_flex().id(`fd-new-repo-${i}`).h(28).pl(22).pr(8).gap(8).items_center().rounded(6).cursor_pointer()
       .when(on, (el) => el.bg(t.selected))
       .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
@@ -386,6 +410,7 @@ export class CreateSpace {
   }
 
   closing() {
+    this.cancelled = true;
     for (const state of [this.name, this.query, this.starter]) state?.release();
   }
 }

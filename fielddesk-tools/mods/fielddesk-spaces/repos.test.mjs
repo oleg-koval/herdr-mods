@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  agentTiles, composeTask, fuzzyScore, isStale, ownerRepoOf, parseLocalIndex, parseRepoList, pushRecent, rankRepos,
-  repoFolder, spaceArgs, spaceName, tilde, TERMINAL, RECENT_MAX, REPO_TTL_MS,
+  agentTiles, composeTask, expandHome, fuzzyScore, isStale, listCommands, ownerRepoOf, parseLocalIndex, parseRepoList,
+  pushRecent, rankRepos, repoConfigFrom, repoFolder, scanScript, spaceArgs, spaceName, tilde, TERMINAL, RECENT_MAX,
+  REPO_TTL_MS,
 } from "./repos.js";
 
 const repo = (full, extra = {}) => {
@@ -60,12 +61,43 @@ test("parseLocalIndex reads two-column lines as main checkouts", () => {
   assert.deepEqual(parseLocalIndex("/h/code/x\thttps://github.com/o/x.git"), { "o/x": "/h/code/x" });
 });
 
-test("repoFolder: the local checkout, else a clone target by owner", () => {
+const config = repoConfigFrom(JSON.stringify({
+  fielddesk_repos: { owners: ["Teifi-Digital", "oleg-koval"], cloneDir: "~/src", roots: { "Teifi-Digital": "~/Work/01_projects/" } },
+}), "/h");
+
+test("repoConfigFrom reads fielddesk_repos and falls back to ~/code", () => {
+  assert.deepEqual(config, {
+    owners: ["Teifi-Digital", "oleg-koval"], scan: ["/h/src"], cloneDir: "/h/src", roots: { "teifi-digital": "/h/Work/01_projects/" },
+  });
+  const fallback = { owners: [], scan: ["/h/code"], cloneDir: "/h/code", roots: {} };
+  assert.deepEqual(repoConfigFrom("not json", "/h"), fallback);
+  assert.deepEqual(repoConfigFrom(JSON.stringify({ fielddesk_repos: { owners: "x", scan: [1, " ", "/abs"], roots: { a: 3 } } }), "/h"),
+    { owners: [], scan: ["/abs"], cloneDir: "/h/code", roots: {} });
+});
+
+test("expandHome only rewrites a leading ~", () => {
+  assert.equal(expandHome("~", "/h"), "/h");
+  assert.equal(expandHome("~/x", "/h"), "/h/x");
+  assert.equal(expandHome("/a/~/b", "/h"), "/a/~/b");
+});
+
+test("repoFolder: the local checkout, else a clone target by owner, else cloneDir", () => {
   const index = { "teifi-digital/gic-live": "/h/Work/01_projects/gic-live" };
-  assert.deepEqual(repoFolder(repos[1], index, "/h"), { folder: "/h/Work/01_projects/gic-live", cloned: true });
-  assert.deepEqual(repoFolder(repos[0], index, "/h"), { folder: "/h/Work/01_projects/gic-integrations", cloned: false });
-  assert.deepEqual(repoFolder(repos[3], {}, "/h"), { folder: "/h/projects/personal/active/herdr-mods", cloned: false });
-  assert.deepEqual(repoFolder(repo("someone/x"), {}, "/h"), { folder: "/h/code/x", cloned: false });
+  assert.deepEqual(repoFolder(repos[1], index, config), { folder: "/h/Work/01_projects/gic-live", cloned: true });
+  assert.deepEqual(repoFolder(repos[0], index, config), { folder: "/h/Work/01_projects/gic-integrations", cloned: false });
+  assert.deepEqual(repoFolder(repos[3], {}, config), { folder: "/h/src/herdr-mods", cloned: false });
+});
+
+test("listCommands: one per owner, or your own repos", () => {
+  assert.deepEqual(listCommands(["a", "b"]).map((args) => args.slice(0, 3)), [["repo", "list", "a"], ["repo", "list", "b"]]);
+  assert.deepEqual(listCommands([])[0].slice(0, 3), ["repo", "list", "--limit"]);
+});
+
+test("scanScript quotes each folder and keeps the glob outside the quotes", () => {
+  const script = scanScript(["/h/my code/", "/h/it's"]);
+  assert.match(script, / '\/h\/my code'\/\*\/\.git\/config /);
+  assert.match(script, / '\/h\/it'\\''s'\/\*\/\.git\/config /);
+  assert.match(script, /; true$/);
 });
 
 test("tilde shortens only folders under home", () => {

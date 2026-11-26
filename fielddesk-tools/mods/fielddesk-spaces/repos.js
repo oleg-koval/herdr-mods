@@ -5,11 +5,51 @@ export const REPO_TTL_MS = 6 * 60 * 60 * 1000;
 export const RECENT_MAX = 8;
 // Shown first, in this order, when installed; the rest keep Herdr's most-picked order.
 const PREFERRED_AGENTS = ["claude", "codex", "pi"];
-// Where a repo that is not on this machine yet gets cloned, by owner (lowercased).
-const CLONE_ROOTS = { "teifi-digital": "Work/01_projects", "oleg-koval": "projects/personal/active" };
-const FALLBACK_CLONE_ROOT = "code";
-
 const lower = (s) => String(s ?? "").toLowerCase();
+const strings = (list) => (Array.isArray(list) ? list.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim()) : []);
+
+/** "~" or "~/x" made absolute; other paths as given. */
+export function expandHome(path, home) {
+  return path === "~" ? home : path.startsWith("~/") ? `${home}${path.slice(1)}` : path;
+}
+
+/**
+ * The repo settings, from settings.json's `fielddesk_repos` (Herdr's settings() carries only the
+ * look, so the file is read itself):
+ *   owners:   GitHub users or orgs to list; none lists your own repos.
+ *   scan:     folders whose subfolders are checked for an existing clone.
+ *   cloneDir: where a repo not found there is cloned, as <cloneDir>/<repo>.
+ *   roots:    a clone folder per owner, over cloneDir.
+ */
+export function repoConfigFrom(settingsText, home) {
+  let raw = {};
+  try {
+    raw = JSON.parse(settingsText ?? "")?.fielddesk_repos ?? {};
+  } catch {}
+  const scan = strings(raw.scan);
+  const cloneDir = typeof raw.cloneDir === "string" && raw.cloneDir.trim() ? raw.cloneDir.trim() : "~/code";
+  const roots = Object.entries(raw.roots && typeof raw.roots === "object" ? raw.roots : {})
+    .filter(([, folder]) => typeof folder === "string" && folder.trim())
+    .map(([owner, folder]) => [lower(owner), expandHome(folder.trim(), home)]);
+  return {
+    owners: strings(raw.owners),
+    scan: (scan.length ? scan : [cloneDir]).map((folder) => expandHome(folder, home)),
+    cloneDir: expandHome(cloneDir, home),
+    roots: Object.fromEntries(roots),
+  };
+}
+
+const shq = (s) => `'${s.replace(/'/g, "'\\''")}'`;
+
+/**
+ * A shell command printing "<folder>\t<origin url>\td" for each main checkout under the scan
+ * folders. One awk over the .git/config files: a git process per folder took 4 s for 500 folders.
+ */
+export function scanScript(folders) {
+  const globs = folders.map((folder) => `${shq(folder.replace(/\/+$/, ""))}/*/.git/config`).join(" ");
+  const awk = String.raw`FNR==1{o=0} /^\[remote "origin"\]/{o=1;next} /^\[/{o=0} o&&$1=="url"{f=FILENAME; sub(/\/\.git\/config$/,"",f); print f "\t" $3 "\td"; nextfile}`;
+  return `awk ${shq(awk)} ${globs} 2>/dev/null; true`;
+}
 
 /** `gh repo list --json nameWithOwner,description,pushedAt,isArchived` output, archived left out. */
 export function parseRepoList(json) {
@@ -57,11 +97,17 @@ export function parseLocalIndex(stdout) {
 }
 
 /** Where the repo is on this machine, else where it will be cloned. */
-export function repoFolder(repo, index, home) {
+export function repoFolder(repo, index, config) {
   const local = index?.[lower(repo.full)];
   if (local) return { folder: local, cloned: true };
-  const root = CLONE_ROOTS[lower(repo.owner)] ?? FALLBACK_CLONE_ROOT;
-  return { folder: `${home}/${root}/${repo.name}`, cloned: false };
+  const root = config.roots[lower(repo.owner)] ?? config.cloneDir;
+  return { folder: `${root.replace(/\/+$/, "")}/${repo.name}`, cloned: false };
+}
+
+/** `gh` argument lists: one per owner, or one for your own repos when none are set. */
+export function listCommands(owners) {
+  const json = ["--limit", "1000", "--no-archived", "--json", "nameWithOwner,description,pushedAt,isArchived"];
+  return (owners.length ? owners : [null]).map((owner) => ["repo", "list", ...(owner ? [owner] : []), ...json]);
 }
 
 /** "~/x" for a folder under home, for showing. */
