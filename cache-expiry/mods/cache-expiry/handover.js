@@ -4,10 +4,13 @@
 //   saved:     both exist; ready once the conversation was cleared after the request
 // "Cleared" means the conversation id on the terminal changed since the request (Claude's
 // SessionStart hook relabels claude.session on /clear; the Codex hook relabels
-// codex.cache.session), or this mod's Clear button marked it.
+// codex.cache.session), or this mod's Clear button marked it at least CLEAR_SETTLE_MS ago.
+// The settle time exists because hc send returns once /clear or /new is typed, not once the
+// program has started the new conversation; text pasted during that start is dropped.
 
 export const HANDOVER_DIR = ".local/state/herdr-handover";
 export const SHARED_KEY = "cache-expiry.handover";
+export const CLEAR_SETTLE_MS = 10_000;
 
 export function handoverPaths(home, address) {
   const dir = `${home}/${HANDOVER_DIR}`;
@@ -29,13 +32,31 @@ export function parseMeta(text) {
   }
 }
 
-/** { requested, saved, cleared, ready } for one terminal. */
-export function handoverState(meta, mdExists, key) {
-  if (!meta) return { requested: false, saved: false, cleared: false, ready: false };
-  const cleared = typeof meta.cleared_at === "number" ||
-    (Boolean(meta.session) && Boolean(key) && key !== meta.session);
+/** { requested, saved, cleared, clearing, ready } for one terminal at time `now` (ms). */
+export function handoverState(meta, mdExists, key, now) {
+  if (!meta) return { requested: false, saved: false, cleared: false, clearing: false, ready: false };
+  const relabelled = Boolean(meta.session) && Boolean(key) && key !== meta.session;
+  const marked = typeof meta.cleared_at === "number";
+  const settled = marked && now - meta.cleared_at >= CLEAR_SETTLE_MS;
+  const cleared = relabelled || settled;
   const saved = Boolean(mdExists);
-  return { requested: !saved, saved, cleared, ready: saved && cleared };
+  return { requested: !saved, saved, cleared, clearing: marked && !cleared, ready: saved && cleared };
+}
+
+/** True once the session reacted to a sent prompt: a new turn, or it is working on one. */
+export function delivered(before, after) {
+  if (!after) return false;
+  return after.state === "working" || (Boolean(before) && after.turn > before.turn);
+}
+
+/** { turn, state } from `hc get --json` output, or null. */
+export function parseProbe(text) {
+  try {
+    const t = JSON.parse(text);
+    return typeof t?.turn === "number" ? { turn: t.turn, state: t.status?.state ?? null } : null;
+  } catch {
+    return null;
+  }
 }
 
 export function handoverPrompt(path) {
