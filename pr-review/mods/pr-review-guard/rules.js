@@ -3,10 +3,10 @@
 // Input is the document `pr-autoreview panel --json` prints (see snapshot() in the dotfiles repo's
 // pr_autoreview/panel.py). Nothing here reads the clock, the disk or the app.
 
-export const VIEWS = ["needs", "all", "repos", "runs"];
+export const VIEWS = ["needs", "all", "repos", "runs", "setup"];
 // "running" is not in the sidebar: it opens from the "running" status line, so a review in
 // progress can be found without scanning All PRs.
-export const VIEW_LABEL = { needs: "Needs you", all: "All PRs", repos: "Repos", runs: "Runs", running: "Reviewing now" };
+export const VIEW_LABEL = { needs: "Needs you", all: "All PRs", repos: "Repos", runs: "Runs", setup: "Review setup", running: "Reviewing now" };
 
 // Tab / Shift-Tab order. From a view outside the sidebar (Reviewing now), Tab goes to the first
 // sidebar view and Shift-Tab to the last, as if it sat just past the end of the list.
@@ -21,6 +21,9 @@ export const NEEDS_YOU = new Set(["HUMAN_NEEDED", "FAILED", "COLLISION", "NEW_CO
 
 // A per-PR retry only works on FAILED (runner.retry); HUMAN_NEEDED needs a person, never a retry.
 export const RETRYABLE = new Set(["FAILED"]);
+
+// "Why" explains a PR that failed or needs a person; it is a read, so any of these can use it.
+export const WHYABLE = new Set(["FAILED", "HUMAN_NEEDED", "COLLISION"]);
 
 const STATUS = {
   HUMAN_NEEDED: { glyph: "▲", tone: "blocked", label: "human needed" },
@@ -48,6 +51,86 @@ const prRow = (p) => ({
 const repoRow = (r) => ({ kind: "repo", key: r.repo, repo: r, text: `${r.repo} ${r.off ? "ignored" : "watched"}` });
 const runRow = (r) => ({ kind: "run", key: `${r.pr_id}/${r.attempt}`, run: r, text: `${r.pr_id} attempt ${r.attempt} ${r.error ? "error" : "ok"}` });
 
+// ---- Review setup: which skill the engine runs, per repo
+
+export const BUILTIN_SETTING = { skill: "olko-github-pr:lekker-review", model: "sonnet", params: {} };
+export const shortSkill = (command) => String(command ?? "").split(":").pop();
+export const SCOPE_RE = /^(default|[\w.-]+\/[\w.-]+)$/;
+
+// "lekker-review · opus · pos0=deep · crossvendor"
+export function describeSetting(setting) {
+  if (!setting) return "";
+  const params = Object.entries(setting.params ?? {}).map(([k, v]) => (v === true ? k : `${k}=${v}`));
+  return [shortSkill(setting.skill), setting.model, ...params].filter(Boolean).join(" · ");
+}
+
+const scopeRow = (scope, label, setting, fallback) => ({
+  kind: "scope", key: `scope:${scope}`, scope, label, setting,
+  text: `${label} ${describeSetting(setting ?? fallback)} ${setting ? "override" : "inherited"}`,
+});
+
+export function setupRows(snap) {
+  const review = snap.review ?? { default: null, repos: {} };
+  const own = (repo) => review.repos?.[repo] ?? null;
+  const repos = snap.repos
+    .map((r) => scopeRow(r.repo, r.repo, own(r.repo), review.default ?? BUILTIN_SETTING))
+    .sort((a, b) => (!a.setting - !b.setting) || a.scope.localeCompare(b.scope));
+  return [scopeRow("default", "Default for every repo", review.default, BUILTIN_SETTING), ...repos];
+}
+
+export const overrideCount = (snap) => Object.keys(snap.review?.repos ?? {}).length + (snap.review?.default ? 1 : 0);
+
+// The form state for one scope: its saved setting, else what it inherits (so Save changes only what was touched).
+export function formFor(setting, inherited) {
+  const from = setting ?? inherited ?? BUILTIN_SETTING;
+  return { skill: from.skill, model: from.model ?? BUILTIN_SETTING.model, params: { ...(from.params ?? {}) } };
+}
+export const chooseSkill = (form, command) => (form.skill === command ? form : { ...form, skill: command, params: {} });
+export const setModel = (form, model) => ({ ...form, model });
+export function setParam(form, id, value) {
+  const params = { ...form.params };
+  if (value === "" || value === false || value == null) delete params[id];
+  else params[id] = value;
+  return { ...form, params };
+}
+export const toPayload = (form) => ({ skill: form.skill, model: form.model, params: { ...form.params } });
+
+// The words the saved params add after the PR link, in the skill's own order (mirrors the engine).
+export function commandPreview(form, skill) {
+  const words = [];
+  for (const f of skill?.params ?? []) {
+    const v = form.params[f.id];
+    if (!v) continue;
+    if (f.kind === "flag") words.push(f.flag);
+    else words.push(...(f.flag ? [f.flag, v] : [v]));
+  }
+  return `/${form.skill} <PR link>${words.length ? ` ${words.join(" ")}` : ""}`;
+}
+
+export function filterSkills(skills, query) {
+  return query.trim() ? skills.filter((s) => matches(query, `${s.command} ${s.source} ${s.description}`)) : skills;
+}
+
+// ---- Why: the engine's diagnosis as lines to draw
+
+const ago = (iso, nowMs) => age(iso, nowMs);
+export function whySections(d, nowMs = Date.now()) {
+  const out = [];
+  const ran = `${shortSkill(d.skill)} · ${d.model}${d.args?.length ? ` · ${d.args.join(" ")}` : ""}`;
+  out.push({ title: `${statusMeta(d.status).label} · attempt ${d.attempts || 0}`, tone: statusMeta(d.status).tone, lines: [`Ran ${ran}${d.last_run_at ? ` · ${ago(d.last_run_at, nowMs)} ago` : ""}`] });
+  for (const r of d.reasons ?? []) {
+    out.push({ title: r.reason, tone: "blocked", lines: [r.meaning, ...r.causes.map((c) => `Could be: ${c}`), ...r.next.map((n) => `Do: ${n}`)] });
+  }
+  for (const r of d.other_reasons ?? []) out.push({ title: r, tone: "dim", lines: ["No explanation known for this reason yet."] });
+  if (d.guard_denials > 0) out.push({ title: `${d.guard_denials} guard denial(s)`, tone: "blocked", lines: ["The safety hook refused tool calls. A skill other than lekker-review often needs tools the guard does not allow."] });
+  const byLabel = new Map();
+  for (const e of d.evidence ?? []) byLabel.set(e.label, [...(byLabel.get(e.label) ?? []), e.text]);
+  for (const [label, lines] of byLabel) out.push({ title: `From the log: ${label}`, tone: "dim", lines });
+  if (!d.run_dir) out.push({ title: "No run log", tone: "dim", lines: ["The run never started, so there is no log."] });
+  else if (d.log_missing) out.push({ title: "Log missing", tone: "dim", lines: [`Expected at ${d.log_path}`] });
+  return out;
+}
+
 const byUpdated = (a, b) => String(b.pr.updated_at ?? "").localeCompare(String(a.pr.updated_at ?? ""));
 
 export function viewRows(snap, view) {
@@ -59,10 +142,11 @@ export function viewRows(snap, view) {
     return snap.repos.map(repoRow).sort((a, b) => (a.repo.off - b.repo.off) || a.repo.repo.localeCompare(b.repo.repo));
   }
   if (view === "runs") return snap.runs.map(runRow);
+  if (view === "setup") return setupRows(snap);
   return [];
 }
 
-export const viewCount = (snap, view) => (view === "needs" ? needsCount(snap) : viewRows(snap, view).length);
+export const viewCount = (snap, view) => (view === "needs" ? needsCount(snap) : view === "setup" ? overrideCount(snap) : viewRows(snap, view).length);
 
 // Every word of the query must match the row. A word matches when it is a substring, or when its letters
 // appear in order inside one token of the row (so "arh2053" or a dropped letter still finds the PR).
@@ -112,6 +196,7 @@ export function actionsFor(row) {
     const { pr } = row;
     return [
       { id: "open", label: "Open", primary: true },
+      ...(WHYABLE.has(pr.status) ? [{ id: "why", label: "Why" }] : []),
       ...(pr.review_file ? [{ id: "review", label: "Review" }] : []),
       ...(RETRYABLE.has(pr.status) ? [{ id: "retry", label: "Retry" }] : []),
     ];
@@ -120,7 +205,8 @@ export function actionsFor(row) {
     // Enter only reads: Watch/Ignore changes the engine's repo list, so it stays a click.
     return [{ id: "pulls", label: "PRs", primary: true }, { id: "toggle", label: row.repo.off ? "Watch" : "Ignore" }];
   }
-  if (row.kind === "run") return [{ id: "open", label: "Open", primary: true }];
+  if (row.kind === "run") return [{ id: "open", label: "Open", primary: true }, ...(row.run.error ? [{ id: "why", label: "Why" }] : [])];
+  if (row.kind === "scope") return [{ id: "edit", label: "Edit", primary: true }, ...(row.setting ? [{ id: "reset", label: row.scope === "default" ? "Use built-in" : "Use default" }] : [])];
   return [];
 }
 
@@ -132,6 +218,10 @@ export const cli = {
   sync: () => ["panel", "--sync", "--json"],
   retry: (prId) => ["retry", prId],
   repo: (repo, off) => ["repos", off ? "disable" : "enable", repo],
+  reviewConfig: () => ["review-config"],
+  saveReview: (scope, setting) => ["review-config", "set", scope, JSON.stringify(setting)],
+  clearReview: (scope) => ["review-config", "clear", scope],
+  why: (prId) => ["why", prId],
 };
 
 // Refresh searches GitHub for every watched PR; under load that outlasted the 20 s every call used to get.
@@ -176,6 +266,10 @@ export function panelPath(bin, linkTarget) {
 // A saved review is only opened from the engine's own folder (pass a realpath).
 export const reviewPathOk = (path, home) =>
   typeof path === "string" && path.startsWith(`${home}/.local/state/pr-autoreview/reviews/`) && !path.split("/").includes("..") && path.endsWith(".md");
+
+// A run's log is only opened from the engine's own logs folder (pass a realpath).
+export const logPathOk = (path, home) =>
+  typeof path === "string" && path.startsWith(`${home}/.local/state/pr-autoreview/logs/`) && !path.split("/").includes("..") && path.endsWith(".log");
 
 export const findTab = (spaceList, name) => spaceList.flatMap((s) => s.tabs).find((t) => t.name === name) ?? null;
 
