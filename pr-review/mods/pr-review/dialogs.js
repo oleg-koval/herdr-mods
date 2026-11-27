@@ -8,8 +8,8 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { closeOverlay, exec, home, props, setShared } from "herdr";
 import {
-  BUILTIN_SETTING, PR_ID_RE, chooseSkill, cli, commandPreview, describeSetting, filterSkills, formFor, logPathOk, setModel,
-  setParam, toPayload, whySections,
+  BUILTIN_SETTING, PR_ID_RE, chooseSkill, cli, commandPreview, describeSetting, filterSkills, formFor, hiddenSkills, logPathOk, setExtra,
+  setModel, setParam, toPayload, whySections,
 } from "./rules.js";
 import { engineBin, makeEngine } from "./engine.js";
 
@@ -54,6 +54,13 @@ export class SetupPane {
     this.search.on("change", (_e, cx) => cx.notify());
     // The skill picker is a dropdown: closed it shows the chosen skill, open it adds the search box and the list.
     this.open = false;
+    this.showAll = false;
+    // Free text for any flag the skill's own argument-hint does not list (the engine refuses the ones it controls).
+    this.extra = InputState.new({ placeholder: "other flags, e.g. --comment" });
+    this.extra.on("change", (_e, cx) => {
+      if (this.form) this.form = setExtra(this.form, this.extra.value());
+      cx.notify();
+    });
     this.search.on("submit", (_e, cx) => {
       const first = this.data && filterSkills(this.data.skills, this.search.value())[0];
       if (first) this.pick(first.command, cx);
@@ -67,6 +74,7 @@ export class SetupPane {
         const own = this.scope === "default" ? r.data.config.default : r.data.config.repos[this.scope] ?? null;
         this.form = formFor(own, this.scope === "default" ? null : r.data.config.default);
         this.hasOwn = Boolean(own);
+        this.extra.set_value(this.form.extra);
         this.rebuildInputs();
       } else this.error = r.error;
       cx.notify();
@@ -89,6 +97,7 @@ export class SetupPane {
 
   pick(command, cx) {
     this.form = chooseSkill(this.form, command);
+    this.extra.set_value(this.form.extra);
     this.rebuildInputs();
     this.setOpen(false, cx);
   }
@@ -147,7 +156,9 @@ export class SetupPane {
         action(t, "close", "Close", () => closeOverlay(this.overlay)), null, this.handle, this.overlay);
     }
     const info = this.skillInfo();
-    const skills = filterSkills(this.data.skills, this.search.value());
+    const query = this.search.value();
+    const skills = filterSkills(this.data.skills, query, { all: this.showAll, keep: this.form.skill });
+    const hidden = hiddenSkills(this.data.skills, this.form.skill);
     const inherited = this.scope === "default" ? BUILTIN_SETTING : this.data.config.default ?? BUILTIN_SETTING;
 
     const list = v_flex().id("skill-list").h(190).flex_none().overflow_y_scrollbar().rounded(6).border_1().border_color(t.border)
@@ -188,9 +199,15 @@ export class SetupPane {
       .when(this.open, (el) => el
         .child(h_flex().h(30).px(10).items_center().rounded(6).border_1().border_color(t.accent).bg(t.background)
           .child(Input.new(this.search).flex_1().h_full().text_size(12.5).text_color(t.foreground)))
+        .when((hidden > 0 || this.showAll) && !query.trim(), (el2) => el2.child(h_flex().gap(8).items_center()
+          .child(div().flex_1().text_size(11).text_color(t.dim).child(this.showAll ? "Showing every review skill" : `Showing skills that take a PR · ${hidden} hidden`))
+          .child(chip(t, "show-all", this.showAll ? "only PR skills" : "show all", false, (cx) => { this.showAll = !this.showAll; cx.notify(); }))))
         .child(list))
       .child(model)
       .child(params)
+      .child(h_flex().gap(10).items_center().child(div().w(110).flex_none().text_size(11.5).text_color(t.muted).child("Extra"))
+        .child(h_flex().flex_1().h(28).px(8).items_center().rounded(6).border_1().border_color(t.border).bg(t.background)
+          .child(Input.new(this.extra).flex_1().h_full().text_size(12).text_color(t.foreground))))
       .child(div().text_size(11).text_color(t.dim).child(`Runs: ${commandPreview(this.form, info)}  ·  inherits ${describeSetting(inherited)}`))
       .when(info && !info.tested, (el) => el.child(div().text_size(11.5).text_color(t.ansi3 ?? t.blocked)
         .child("Untested under the unattended guard. It can fail with guard denials or \"no review file saved\"; the Why button on a failed PR shows what blocked it.")))

@@ -5,7 +5,7 @@ import {
   NEEDS_YOU, actionsFor, age, clampIndex, cli, countdown, failedCount, filterRows, matches, money, needsCount,
   pageOf, paginate, parseSnapshot, prUrl, pullsUrl, shortRepo, statusMeta, viewCount, viewRows,
   findTab, miniStatus, execFailure, execTimeout, EXEC_MS, SYNC_MS, panelPath, reviewPathOk, VIEWS, VIEW_LABEL, nextView,
-  BUILTIN_SETTING, chooseSkill, commandPreview, describeSetting, filterSkills, formFor, logPathOk, overrideCount, setModel, setParam,
+  BUILTIN_SETTING, chooseSkill, commandPreview, describeSetting, filterSkills, formFor, hiddenSkills, logPathOk, overrideCount, setExtra, setModel, setParam,
   setupRows, toPayload, whySections,
 } from "./rules.js";
 
@@ -224,10 +224,22 @@ test("setup rows are searchable by skill and by whether they override", () => {
 });
 
 test("the form starts from the saved setting, else what the scope inherits, else the built-in", () => {
-  assert.deepEqual(formFor(null, null), { skill: BUILTIN_SETTING.skill, model: "sonnet", params: {} });
-  assert.deepEqual(formFor(null, { skill: "x:a", model: "haiku", params: { p: 1 } }), { skill: "x:a", model: "haiku", params: { p: 1 } });
+  assert.deepEqual(formFor(null, null), { skill: BUILTIN_SETTING.skill, model: "sonnet", params: {}, extra: "" });
+  assert.deepEqual(formFor(null, { skill: "x:a", model: "haiku", params: { p: 1 } }), { skill: "x:a", model: "haiku", params: { p: 1 }, extra: "" });
   const own = { skill: "x:b", params: { q: "v" } };
-  assert.deepEqual(formFor(own, { skill: "x:a" }), { skill: "x:b", model: "sonnet", params: { q: "v" } });
+  assert.deepEqual(formFor(own, { skill: "x:a" }), { skill: "x:b", model: "sonnet", params: { q: "v" }, extra: "" });
+});
+
+test("extra arguments: trimmed, cleared by a new skill, sent only when set, shown in the preview and the summary", () => {
+  const form = setExtra(formFor(null, null), "  --comment hi ");
+  assert.equal(form.extra, "--comment hi");
+  assert.equal(chooseSkill(form, "x:other").extra, "");
+  assert.equal(chooseSkill(form, form.skill).extra, "--comment hi");
+  assert.deepEqual(toPayload(form), { skill: form.skill, model: "sonnet", params: {}, extra: "--comment hi" });
+  assert.equal("extra" in toPayload(setExtra(form, "")), false);
+  assert.equal(commandPreview(setParam(form, "pos0", "deep"), lekker), "/olko-github-pr:lekker-review <PR link> deep --comment hi");
+  assert.equal(describeSetting({ skill: "a:b", model: "opus", params: {}, extra: "--comment hi" }), "b · opus · --comment hi");
+  assert.equal(formFor({ skill: "x:b", extra: "--tone kind" }, null).extra, "--tone kind");
 });
 
 test("form edits return new values: a new skill drops the old params, empty values are removed", () => {
@@ -254,6 +266,17 @@ test("skill search matches name, source and description", () => {
   assert.deepEqual(filterSkills(skills, "style").map((s) => s.command), ["my-review"]);
   assert.deepEqual(filterSkills(skills, "faang").map((s) => s.command), [lekker.command]);
   assert.equal(filterSkills(skills, " ").length, 2);
+});
+
+test("the skill list shows only skills that take a PR, until all are asked for or searched; the chosen one stays", () => {
+  const pr = { command: "a:pr", takes_pr: true }, local = { command: "a:local", takes_pr: false }, old = { command: "a:old" };
+  const skills = [pr, local, old];
+  assert.deepEqual(filterSkills(skills, "").map((s) => s.command), ["a:pr", "a:old"]);
+  assert.deepEqual(filterSkills(skills, "", { keep: "a:local" }).map((s) => s.command), ["a:pr", "a:local", "a:old"]);
+  assert.equal(filterSkills(skills, "", { all: true }).length, 3);
+  assert.deepEqual(filterSkills(skills, "local").map((s) => s.command), ["a:local"]);
+  assert.equal(hiddenSkills(skills), 1);
+  assert.equal(hiddenSkills(skills, "a:local"), 0);
 });
 
 test("why sections: reasons with causes and next steps, then guard denials, then log evidence", () => {

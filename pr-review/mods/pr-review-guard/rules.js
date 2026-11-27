@@ -61,7 +61,7 @@ export const SCOPE_RE = /^(default|[\w.-]+\/[\w.-]+)$/;
 export function describeSetting(setting) {
   if (!setting) return "";
   const params = Object.entries(setting.params ?? {}).map(([k, v]) => (v === true ? k : `${k}=${v}`));
-  return [shortSkill(setting.skill), setting.model, ...params].filter(Boolean).join(" · ");
+  return [shortSkill(setting.skill), setting.model, ...params, setting.extra].filter(Boolean).join(" · ");
 }
 
 const scopeRow = (scope, label, setting, fallback) => ({
@@ -83,9 +83,10 @@ export const overrideCount = (snap) => Object.keys(snap.review?.repos ?? {}).len
 // The form state for one scope: its saved setting, else what it inherits (so Save changes only what was touched).
 export function formFor(setting, inherited) {
   const from = setting ?? inherited ?? BUILTIN_SETTING;
-  return { skill: from.skill, model: from.model ?? BUILTIN_SETTING.model, params: { ...(from.params ?? {}) } };
+  return { skill: from.skill, model: from.model ?? BUILTIN_SETTING.model, params: { ...(from.params ?? {}) }, extra: from.extra ?? "" };
 }
-export const chooseSkill = (form, command) => (form.skill === command ? form : { ...form, skill: command, params: {} });
+export const chooseSkill = (form, command) => (form.skill === command ? form : { ...form, skill: command, params: {}, extra: "" });
+export const setExtra = (form, value) => ({ ...form, extra: String(value ?? "").trim() });
 export const setModel = (form, model) => ({ ...form, model });
 export function setParam(form, id, value) {
   const params = { ...form.params };
@@ -93,7 +94,7 @@ export function setParam(form, id, value) {
   else params[id] = value;
   return { ...form, params };
 }
-export const toPayload = (form) => ({ skill: form.skill, model: form.model, params: { ...form.params } });
+export const toPayload = (form) => ({ skill: form.skill, model: form.model, params: { ...form.params }, ...(form.extra ? { extra: form.extra } : {}) });
 
 // The words the saved params add after the PR link, in the skill's own order (mirrors the engine).
 export function commandPreview(form, skill) {
@@ -104,12 +105,17 @@ export function commandPreview(form, skill) {
     if (f.kind === "flag") words.push(f.flag);
     else words.push(...(f.flag ? [f.flag, v] : [v]));
   }
+  if (form.extra) words.push(form.extra);
   return `/${form.skill} <PR link>${words.length ? ` ${words.join(" ")}` : ""}`;
 }
 
-export function filterSkills(skills, query) {
-  return query.trim() ? skills.filter((s) => matches(query, `${s.command} ${s.source} ${s.description}`)) : skills;
+// Skills an auto-review can feed a PR (their argument-hint takes one) unless `all`; a search looks at every skill, and
+// the chosen one is always kept. An engine that does not report `takes_pr` shows everything.
+export function filterSkills(skills, query, { all = false, keep = null } = {}) {
+  if (query.trim()) return skills.filter((s) => matches(query, `${s.command} ${s.source} ${s.description}`));
+  return all ? skills : skills.filter((s) => s.takes_pr !== false || s.command === keep);
 }
+export const hiddenSkills = (skills, keep = null) => skills.filter((s) => s.takes_pr === false && s.command !== keep).length;
 
 // ---- Why: the engine's diagnosis as lines to draw
 
