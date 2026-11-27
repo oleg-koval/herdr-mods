@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { closeTargets, forkSource, pinPlan, tabMenuItems, shortcutFor } from "./items.js";
+import { closeTargets, forkSource, pinPlan, tabMenuItems, tabSessions, shortcutFor } from "./items.js";
 
 const agent = (address, extra) => ({ address, tab: "tb1", app: "claude-code", focused: false, seq: 1, tab_name: "", title: "Claude Code", ...extra });
 
@@ -15,14 +15,14 @@ test("tabMenuItems adds Fork session only for a tab with a Claude session", () =
   const withClaude = tabMenuItems(target, [agent("t1", { tab_name: "PR review" })]);
   assert.deepEqual(withClaude.map((i) => i.label).slice(0, 3), ["Rename", "New tab", "Fork session"]);
   assert.deepEqual(withClaude[2].fork, { address: "t1", title: "PR review" });
-  assert.deepEqual(tabMenuItems(target, []).map((i) => i.label).slice(0, 3), ["Rename", "New tab", "Pin tab"]);
+  assert.deepEqual(tabMenuItems(target, []).map((i) => i.label).slice(0, 3), ["Rename", "New tab", "Copy session id"]);
 });
 
 test("the menu offers Pin or Unpin and the browser-style closes", () => {
   const ctx = { tabIds: ["a", "b", "c", "d"], pinned: ["a"] };
   assert.deepEqual(tabMenuItems({ id: "c", space: "sp1" }, [], ctx).map((i) => i.label),
-    ["Rename", "New tab", "Pin tab", "Close", "Close others", "Close to the right", "Close to the left"]);
-  assert.equal(tabMenuItems({ id: "a", space: "sp1" }, [], ctx)[2].label, "Unpin tab");
+    ["Rename", "New tab", "Copy session id", "Copy herdr session id", "Pin tab", "Close", "Close others", "Close to the right", "Close to the left"]);
+  assert.equal(tabMenuItems({ id: "a", space: "sp1" }, [], ctx).map((i) => i.label)[4], "Unpin tab");
 });
 
 test("bulk closes name only unpinned tabs on the chosen side and are disabled when there are none", () => {
@@ -54,4 +54,29 @@ test("shortcutFor finds the bound key and skips the palette pseudo-binding", () 
   assert.equal(shortcutFor(bindings, "tab.new"), "cmd-t");
   assert.equal(shortcutFor(bindings, "tab.rename"), "f2");
   assert.equal(shortcutFor(bindings, "tab.close"), "");
+});
+
+const term = (address, labels) => ({ address, labels });
+
+test("tabSessions reads the Claude conversation id and Herdr address of the tab's focused Claude terminal", () => {
+  const terminals = [term("t1", { "claude.session": "s-old" }), term("t2", { "claude.session": "s-new" }), term("t3", {})];
+  const agents = [agent("t1", { seq: 9 }), agent("t2", { focused: true }), agent("t3", { app: "zsh", seq: 99 }), agent("t4", { tab: "tb2" })];
+  assert.deepEqual(tabSessions("tb1", agents, terminals), { claude: "s-new", herdr: "t2" });
+});
+
+test("tabSessions falls back to labelled terminals and to a Herdr address without a Claude id", () => {
+  assert.deepEqual(tabSessions("tb1", [], [term("t9", { "herdr.tab": "tb1", "claude.session": "s9" })]), { claude: "s9", herdr: "t9" });
+  assert.deepEqual(tabSessions("tb1", [agent("t5", { app: "codex" })], [term("t5", {})]), { claude: null, herdr: "t5" });
+  assert.deepEqual(tabSessions("tb1", [], []), { claude: null, herdr: null });
+});
+
+test("the copy rows carry the ids and are disabled when the tab has none", () => {
+  const target = { id: "tb1", space: "sp1" };
+  const items = tabMenuItems(target, [agent("t1")], { terminals: [term("t1", { "claude.session": "abc" })] });
+  const rows = Object.fromEntries(items.map((i) => [i.label, i]));
+  assert.deepEqual([rows["Copy session id"].copy, rows["Copy session id"].disabled], ["abc", false]);
+  assert.deepEqual([rows["Copy herdr session id"].copy, rows["Copy herdr session id"].disabled], ["t1", false]);
+  const bare = Object.fromEntries(tabMenuItems(target, []).map((i) => [i.label, i]));
+  assert.equal(bare["Copy session id"].disabled, true);
+  assert.equal(bare["Copy herdr session id"].disabled, true);
 });
