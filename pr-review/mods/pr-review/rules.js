@@ -134,6 +134,16 @@ export const cli = {
   repo: (repo, off) => ["repos", off ? "disable" : "enable", repo],
 };
 
+// Refresh searches GitHub for every watched PR; under load that outlasted the 20 s every call used to get.
+export const EXEC_MS = 20000;
+export const SYNC_MS = 120000;
+export const execTimeout = (argv) => (argv.includes("--sync") ? SYNC_MS : EXEC_MS);
+
+// What the board shows when the engine call itself threw. herdr.exec's timeout reads "...took too long".
+export function execFailure(err, ms) {
+  return /took too long/i.test(String(err)) ? `engine took longer than ${ms / 1000}s; try again` : `could not run engine: ${err}`;
+}
+
 // The repo name goes into a URL and a CLI argument: only owner/name shapes pass.
 export const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 export const PR_ID_RE = /^[\w.-]+\/[\w.-]+#\d+$/;

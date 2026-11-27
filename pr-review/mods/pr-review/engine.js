@@ -3,9 +3,8 @@
 // and of rules.js; rules.test.mjs fails when they drift.
 
 import { exec, home, props, readTextFile } from "herdr";
-import { ENGINE_MARK, cli, panelPath, parseSnapshot } from "./rules.js";
+import { ENGINE_MARK, cli, execFailure, execTimeout, panelPath, parseSnapshot } from "./rules.js";
 
-const EXEC_MS = 20000;
 const GATE_RETRY_MS = 120000;
 
 const firstLine = (s) => String(s ?? "").trim().split("\n")[0] ?? "";
@@ -43,7 +42,7 @@ export function makeEngine(bin) {
   async function panel(argv, force = false) {
     if (!(await gate(force))) return tooOld;
     try {
-      const r = await exec(bin, argv, { timeout: EXEC_MS });
+      const r = await exec(bin, argv, { timeout: execTimeout(argv) });
       if (r.code !== 0) {
         drop();
         return { error: `engine exit ${r.code}: ${firstLine(r.stderr) || firstLine(r.stdout)}` };
@@ -53,7 +52,7 @@ export function makeEngine(bin) {
       return out;
     } catch (err) {
       drop();
-      return { error: `could not run engine: ${err}` };
+      return { error: execFailure(err, execTimeout(argv)) };
     }
   }
 
@@ -61,13 +60,13 @@ export function makeEngine(bin) {
   async function command(argv) {
     if (!(await gate(false))) return tooOld;
     try {
-      const r = await exec(bin, argv, { timeout: EXEC_MS });
+      const r = await exec(bin, argv, { timeout: execTimeout(argv) });
       if (r.code === 0) return { ok: true };
       drop();
       return { error: `engine exit ${r.code}: ${firstLine(r.stderr) || firstLine(r.stdout)}` };
     } catch (err) {
       drop();
-      return { error: `could not run engine: ${err}` };
+      return { error: execFailure(err, execTimeout(argv)) };
     }
   }
 
