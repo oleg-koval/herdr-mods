@@ -28,10 +28,10 @@ const action = (t, id, label, onClick, { primary = false, disabled = false } = {
     .when(!disabled, (el) => el.cursor_pointer().hover((s) => s.opacity(0.88)).on_click((_e, cx) => { cx.stop_propagation(); onClick(cx); }))
     .child(label);
 
-const shell = (t, title, body, footer, onKey, handle) =>
+const shell = (t, title, body, footer, onKey, handle, overlay) =>
   v_flex().id("pr-review-dialog").track_focus(handle).size_full().min_h(0).p(18).gap(10).rounded(8).bg(t.popover).text_size(13)
     .on_key_down((e, cx) => {
-      if (e.key === "escape") { closeOverlay(props().overlay); cx.stop_propagation(); } else onKey?.(e, cx);
+      if (e.key === "escape") { closeOverlay(overlay); cx.stop_propagation(); } else onKey?.(e, cx);
     })
     .child(h_flex().items_center().child(div().flex_1().text_size(15).font_semibold().text_color(t.foreground).child(title)).child(div().text_size(11).text_color(t.dim).child("Esc")))
     .child(body)
@@ -39,6 +39,9 @@ const shell = (t, title, body, footer, onKey, handle) =>
 
 export class SetupPane {
   init(cx) {
+    // Read once: after an await, props() can resolve to the board's copy of this mod (role "board", no overlay)
+    // and the close would do nothing.
+    this.overlay = props()?.overlay ?? null;
     this.engine = makeEngine(engineBin());
     this.scope = props()?.scope ?? "default";
     this.data = null;
@@ -88,8 +91,8 @@ export class SetupPane {
       const r = await this.engine.json(argv);
       this.busy = false;
       if (r.data) {
+        closeOverlay(this.overlay);
         changed();
-        closeOverlay(props().overlay);
         return;
       }
       this.error = r.error;
@@ -119,7 +122,7 @@ export class SetupPane {
     const title = this.scope === "default" ? "Review setup · default for every repo" : `Review setup · ${this.scope}`;
     if (!this.data || !this.form) {
       return shell(t, title, div().p(8).text_color(this.error ? t.blocked : t.dim).child(this.error ?? "Loading skills…"),
-        action(t, "close", "Close", () => closeOverlay(props().overlay)), null, this.handle);
+        action(t, "close", "Close", () => closeOverlay(this.overlay)), null, this.handle, this.overlay);
     }
     const info = this.skillInfo();
     const skills = filterSkills(this.data.skills, this.search.value());
@@ -159,14 +162,15 @@ export class SetupPane {
 
     const footer = h_flex().gap(8)
       .when(this.hasOwn, (el) => el.child(action(t, "clear", this.scope === "default" ? "Use built-in" : "Use default", (cx) => this.send(cli.clearReview(this.scope), cx), { disabled: this.busy })))
-      .child(action(t, "cancel", "Cancel", () => closeOverlay(props().overlay)))
+      .child(action(t, "cancel", "Cancel", () => closeOverlay(this.overlay)))
       .child(action(t, "save", this.busy ? "Saving…" : "Save", (cx) => this.send(cli.saveReview(this.scope, toPayload(this.form)), cx), { primary: true, disabled: this.busy }));
-    return shell(t, title, body, footer, null, this.handle);
+    return shell(t, title, body, footer, null, this.handle, this.overlay);
   }
 }
 
 export class WhyPane {
   init(cx) {
+    this.overlay = props()?.overlay ?? null;
     this.engine = makeEngine(engineBin());
     this.prId = String(props()?.prId ?? "");
     this.diag = null;
@@ -197,7 +201,7 @@ export class WhyPane {
   retry(cx) {
     cx.spawn(async (cx) => {
       const r = await this.engine.command(cli.retry(this.prId));
-      if (r.ok) { changed(); closeOverlay(props().overlay); return; }
+      if (r.ok) { closeOverlay(this.overlay); changed(); return; }
       this.note = r.error;
       cx.notify();
     });
@@ -207,7 +211,7 @@ export class WhyPane {
     const title = `Why · ${this.prId}`;
     if (!this.diag) {
       return shell(t, title, div().p(8).text_color(this.error ? t.blocked : t.dim).child(this.error ?? "Reading the run…"),
-        action(t, "close", "Close", () => closeOverlay(props().overlay)), null, this.handle);
+        action(t, "close", "Close", () => closeOverlay(this.overlay)), null, this.handle, this.overlay);
     }
     const d = this.diag;
     const sections = whySections(d);
@@ -219,8 +223,8 @@ export class WhyPane {
     const footer = h_flex().gap(8)
       .when(Boolean(d.log_path) && !d.log_missing, (el) => el.child(action(t, "log", "Open log", (cx) => this.openLog(cx))))
       .when(d.status === "FAILED", (el) => el.child(action(t, "retry", "Retry", (cx) => this.retry(cx))))
-      .child(action(t, "close", "Close", () => closeOverlay(props().overlay), { primary: true }));
-    return shell(t, title, body, footer, null, this.handle);
+      .child(action(t, "close", "Close", () => closeOverlay(this.overlay), { primary: true }));
+    return shell(t, title, body, footer, null, this.handle, this.overlay);
   }
 }
 
