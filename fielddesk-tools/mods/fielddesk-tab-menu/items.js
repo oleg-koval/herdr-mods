@@ -9,6 +9,22 @@ export function forkSource(tabId, agents) {
   return claude.find((a) => a.focused) ?? [...claude].sort((a, b) => b.seq - a.seq)[0] ?? null;
 }
 
+/** The ids a tab's session menu rows copy: the Claude conversation id (the `claude.session` label its hook
+ *  puts on the terminal) and that terminal's Herdr address. Terminals come from the tab's agents (focused
+ *  Claude first, then most recent), then any terminal labelled with the tab. Null where there is none. */
+export function tabSessions(tabId, agents, terminals = []) {
+  const rank = (a) => [a.app === "claude-code" ? 0 : 1, a.focused ? 0 : 1, -(a.seq ?? 0)];
+  const byRank = (a, b) => { const x = rank(a), y = rank(b); return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; };
+  const labelled = (address) => terminals.find((t) => t.address === address)?.labels;
+  const addresses = [
+    ...agents.filter((a) => a.tab === tabId).sort(byRank).map((a) => a.address),
+    ...terminals.filter((t) => t.labels?.["herdr.tab"] === tabId).map((t) => t.address),
+  ];
+  const idOf = (address) => { const id = labelled(address)?.["claude.session"]; return typeof id === "string" && id ? id : null; };
+  const withClaude = addresses.find((address) => idOf(address));
+  return { claude: withClaude ? idOf(withClaude) : null, herdr: withClaude ?? addresses[0] ?? null };
+}
+
 /** Tabs a bulk close may end: the ones on the chosen side of `id`, never a pinned one, never `id`. */
 export function closeTargets(kind, tabIds, pinned, id) {
   const at = tabIds.indexOf(id);
@@ -38,6 +54,7 @@ export function tabMenuItems(target, agents, ctx = {}) {
   const isPinned = pinned.includes(target.id);
   const source = forkSource(target.id, agents);
   const plan = pinPlan(tabIds, pinned, target.id, known);
+  const sessions = tabSessions(target.id, agents, ctx.terminals ?? []);
   const bulk = (kind, label, icon) => {
     const ids = closeTargets(kind, tabIds, pinned, target.id);
     return { label, icon, closes: ids, disabled: ids.length === 0 };
@@ -46,6 +63,8 @@ export function tabMenuItems(target, agents, ctx = {}) {
     { label: "Rename", icon: "square-pen", command: "tab.rename", args: { id: target.id } },
     { label: "New tab", icon: "plus", command: "tab.new", args: { space: target.space } },
     ...(source ? [{ label: "Fork session", icon: "git-branch", fork: { address: source.address, title: source.tab_name || source.title } }] : []),
+    { label: "Copy session id", icon: "files", copy: sessions.claude, disabled: !sessions.claude },
+    { label: "Copy herdr session id", icon: "terminal", copy: sessions.herdr, disabled: !sessions.herdr },
     { label: isPinned ? "Unpin tab" : "Pin tab", icon: isPinned ? "pin-off" : "pin", pin: { value: plan.pinned, moveTo: plan.moveTo, id: target.id }, separated: true },
     { label: "Close", icon: "x", command: "tab.close", args: { id: target.id }, separated: true },
     bulk("others", "Close others", "x"),
