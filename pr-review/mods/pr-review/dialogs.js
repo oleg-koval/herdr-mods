@@ -182,7 +182,8 @@ export class SetupPane {
       .child(div().text_size(10.5).text_color(info?.tested ? t.done : (t.ansi3 ?? t.blocked)).child(info ? (info.tested ? "tested" : "untested") : ""))
       .child(div().text_size(12).text_color(t.muted).child(this.open ? "▴" : "▾"));
 
-    const body = v_flex().flex_1().min_h(0).gap(10)
+    // Scrolls, so a skill with many params plus the open list never pushes Save out of the dialog.
+    const body = v_flex().id("setup-body").flex_1().min_h(0).overflow_y_scrollbar().gap(10)
       .child(trigger)
       .when(this.open, (el) => el
         .child(h_flex().h(30).px(10).items_center().rounded(6).border_1().border_color(t.accent).bg(t.background)
