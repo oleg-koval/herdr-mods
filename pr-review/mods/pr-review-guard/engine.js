@@ -70,7 +70,26 @@ export function makeEngine(bin) {
     }
   }
 
-  return { panel, command, read: (force) => panel(cli.read(), force) };
+  // Runs a command that prints one JSON value (skills, review-config, why). A refusal such as an invalid
+  // setting is the command's own answer, not a sign the engine changed, so it does not re-arm the gate.
+  async function json(argv) {
+    if (!(await gate(false))) return tooOld;
+    try {
+      const r = await exec(bin, argv, { timeout: execTimeout(argv) });
+      if (r.code === 2 && /^usage:/.test(String(r.stderr).trim())) return { error: `engine too old: update dotfiles (needs \`pr-autoreview ${argv[0]}\`)` };
+      if (r.code !== 0) return { error: firstLine(r.stderr) || firstLine(r.stdout) || `engine exit ${r.code}` };
+      try {
+        return { data: JSON.parse(r.stdout) };
+      } catch {
+        return { error: "engine did not print JSON" };
+      }
+    } catch (err) {
+      drop();
+      return { error: execFailure(err, execTimeout(argv)) };
+    }
+  }
+
+  return { panel, command, json, read: (force) => panel(cli.read(), force) };
 }
 
 export function engineBin() {

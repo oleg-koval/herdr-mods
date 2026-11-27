@@ -6,20 +6,25 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { checking, closeOverlay, exec, home, nextCommand, props, settings, theme } from "herdr";
+import { checking, closeOverlay, exec, home, nextCommand, openOverlay, props, settings, shared, theme } from "herdr";
 import {
-  PR_ID_RE, REPO_RE, VIEWS, VIEW_LABEL, actionsFor, age, clampIndex, cli, countdown, failedCount,
+  BUILTIN_SETTING, PR_ID_RE, REPO_RE, SCOPE_RE, VIEWS, VIEW_LABEL, actionsFor, age, clampIndex, cli, countdown, describeSetting, failedCount,
   filterRows, miniStatus, money, nextView, pageOf, paginate, prUrl,
   pullsUrl, queuedCount, reviewPathOk, shortRepo, statusMeta, viewCount, viewRows,
 } from "./rules.js";
 import { engineBin, makeEngine } from "./engine.js";
+import { SetupPane, WhyPane } from "./dialogs.js";
 
 const ROW_H = 52;
 const REFRESH_MS = 30000;
 
 export default class PrReview extends View {
   init(_props, cx) {
-    if (props()?.role === "board") this.initBoard(cx);
+    const role = props()?.role;
+    if (role === "setup" || role === "why") {
+      this.pane = role === "setup" ? new SetupPane() : new WhyPane();
+      this.pane.init(cx);
+    } else if (role === "board") this.initBoard(cx);
     // The guard used to live here as a kept window recorded with this mod and no role; close it once.
     else if (props()?.overlay) closeOverlay(props().overlay);
   }
@@ -163,7 +168,15 @@ export default class PrReview extends View {
       const subject = row.kind === "pr" ? row.pr : row.run;
       if (action.id === "open") this.openUrl(prUrl(subject.url), cx);
       else if (action.id === "review") this.openReview(row.pr.review_file, cx);
+      else if (action.id === "why") {
+        const prId = row.kind === "pr" ? row.pr.id : row.run.pr_id;
+        if (PR_ID_RE.test(prId)) openOverlay({ mod: "pr-review", kind: "dialog", width: 640, height: 520, props: { role: "why", prId, bin: props()?.bin } });
+      }
       else if (action.id === "retry" && PR_ID_RE.test(row.pr.id)) this.write(`Retry ${shortRepo(row.pr.repo)}#${row.pr.number}`, cli.retry(row.pr.id), false, cx);
+    } else if (row.kind === "scope") {
+      if (!SCOPE_RE.test(row.scope)) return;
+      if (action.id === "edit") openOverlay({ mod: "pr-review", kind: "dialog", width: 700, height: 640, props: { role: "setup", scope: row.scope, bin: props()?.bin } });
+      else if (action.id === "reset") this.write(`Reset ${row.scope}`, cli.clearReview(row.scope), false, cx);
     } else if (row.kind === "repo") {
       if (action.id === "pulls") this.openUrl(pullsUrl(row.repo.repo), cx);
       else if (action.id === "toggle" && REPO_RE.test(row.repo.repo)) {
@@ -198,6 +211,7 @@ export default class PrReview extends View {
     else if (k === "tab") this.cycleView(e.modifiers.shift ? -1 : 1, cx);
     else if (k === "o" && e.modifiers.control) this.act(this.current(), "review", cx);
     else if (k === "r" && e.modifiers.control) this.act(this.current(), "retry", cx);
+    else if (k === "w" && e.modifiers.control) this.act(this.current(), "why", cx);
     else return;
     cx.stop_propagation();
     cx.notify();
@@ -257,6 +271,13 @@ export default class PrReview extends View {
         .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(p.title ?? ""));
       const bottom = [`@${p.author ?? "?"}`, age(p.updated_at, now), meta.label, ...(p.reasons ?? [])].filter(Boolean).join(" · ");
       return base.child(div().w(14).flex_none().text_color(t[meta.tone] ?? t.dim).child(meta.glyph)).child(text(top, bottom)).child(this.rowButtons(t, row, i));
+    }
+    if (row.kind === "scope") {
+      const fallback = this.snap?.review?.default ?? BUILTIN_SETTING;
+      const own = Boolean(row.setting);
+      const top = div().truncate().text_size(13).text_color(t.foreground).child(row.label);
+      const bottom = own ? describeSetting(row.setting) : `uses ${this.snap?.review?.default ? "the default" : "the built-in"}: ${describeSetting(fallback)}`;
+      return base.child(div().w(14).flex_none().text_color(own ? t.working ?? t.done : t.dim).child(own ? "◆" : "○")).child(text(top, bottom)).child(this.rowButtons(t, row, i));
     }
     if (row.kind === "repo") {
       const r = row.repo;
@@ -366,6 +387,7 @@ export default class PrReview extends View {
     } else if (!rows.length) {
       const empty = this.query.trim()
         ? `No match for "${this.query.trim()}"`
+        : this.view === "setup" ? "No repos known yet"
         : this.view === "needs" ? "Nothing needs you" : this.view === "running" ? "Nothing is being reviewed now" : `No ${VIEW_LABEL[this.view].toLowerCase()} yet`;
       body = div().p(24).text_size(13).text_color(t.dim).child(empty);
     } else {
@@ -417,9 +439,17 @@ export default class PrReview extends View {
       .child(pager);
   }
 
-  render() {
+  render(cx) {
+    if (this.pane) return this.pane.render(theme(), cx);
     if (props()?.role !== "board") return div().size_full();
     const t = theme();
+    // A dialog saved something or retried a PR: read again instead of waiting for the next 30 s tick.
+    const stamp = shared("pr-review.changed");
+    if (this.changeStamp === undefined) this.changeStamp = stamp;
+    else if (stamp !== this.changeStamp) {
+      this.changeStamp = stamp;
+      cx.timer.after(50, (cx) => this.refresh(cx, true));
+    }
     return h_flex()
       .id("pr-review")
       .size_full()

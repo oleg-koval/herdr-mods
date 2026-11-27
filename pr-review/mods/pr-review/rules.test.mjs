@@ -5,6 +5,8 @@ import {
   NEEDS_YOU, actionsFor, age, clampIndex, cli, countdown, failedCount, filterRows, matches, money, needsCount,
   pageOf, paginate, parseSnapshot, prUrl, pullsUrl, shortRepo, statusMeta, viewCount, viewRows,
   findTab, miniStatus, execFailure, execTimeout, EXEC_MS, SYNC_MS, panelPath, reviewPathOk, VIEWS, VIEW_LABEL, nextView,
+  BUILTIN_SETTING, chooseSkill, commandPreview, describeSetting, filterSkills, formFor, logPathOk, overrideCount, setModel, setParam,
+  setupRows, toPayload, whySections,
 } from "./rules.js";
 
 const pr = (n, status, extra = {}) => ({
@@ -74,8 +76,8 @@ test("selection index maps to a page and clamps", () => {
 test("actions: retry only on FAILED, review only with a file, repo toggle names the next state", () => {
   const rows = viewRows(snap(), "all");
   const ids = (n) => actionsFor(rows.find((r) => r.pr.number === n)).map((a) => a.id);
-  assert.deepEqual(ids(3), ["open", "retry"]);
-  assert.deepEqual(ids(2), ["open", "review"]);
+  assert.deepEqual(ids(3), ["open", "why", "retry"]);
+  assert.deepEqual(ids(2), ["open", "why", "review"]);
   assert.deepEqual(ids(1), ["open"]);
   const repoRows = viewRows(snap(), "repos");
   assert.equal(actionsFor(repoRows[0])[1].label, "Ignore");
@@ -83,6 +85,8 @@ test("actions: retry only on FAILED, review only with a file, repo toggle names 
   // Enter (the primary action) never mutates: it opens the repo's PR list.
   assert.deepEqual(repoRows.map((r) => actionsFor(r).find((a) => a.primary).id), ["pulls", "pulls", "pulls"]);
   assert.ok(actionsFor(viewRows(snap(), "runs")[0]).every((a) => a.id === "open"));
+  const failedRun = { kind: "run", run: { pr_id: "example-org/app#3", error: true } };
+  assert.deepEqual(actionsFor(failedRun).map((a) => a.id), ["open", "why"]);
 });
 
 test("status meta has a fallback for an unknown status", () => {
@@ -179,9 +183,10 @@ test("running view lists only reviews in progress, outside the sidebar views", (
 
 test("nextView cycles the sidebar, and leaves Reviewing now at the list's ends", () => {
   assert.equal(nextView("needs", 1), "all");
-  assert.equal(nextView("needs", -1), "runs");
+  assert.equal(nextView("needs", -1), "setup");
+  assert.equal(nextView("setup", 1), "needs");
   assert.equal(nextView("running", 1), "needs");
-  assert.equal(nextView("running", -1), "runs");
+  assert.equal(nextView("running", -1), "setup");
 });
 
 test("Refresh (sync) gets a longer exec timeout than a plain read", () => {
@@ -195,4 +200,93 @@ test("an exec timeout is shown as a plain sentence, any other throw keeps its te
   const timeout = new Error("`herdr.exec`: /Users/me/bin/pr-autoreview took too long");
   assert.equal(execFailure(timeout, 120000), "engine took longer than 120s; try again");
   assert.match(execFailure(new Error("spawn ENOENT"), 20000), /^could not run engine: .*spawn ENOENT/);
+});
+
+const withReview = (review) => ({ ...snap(), review });
+const lekker = { command: "olko-github-pr:lekker-review", source: "plugin olko-github-pr", description: "FAANG-quality PR review", tested: true,
+  params: [{ id: "pos0", kind: "choice", flag: null, options: ["scan", "deep"] }, { id: "base", kind: "text", flag: "--base" }, { id: "crossvendor", kind: "flag", flag: "--crossvendor" }] };
+
+test("setup rows: default first, then repos with their own setting, then the rest alphabetically", () => {
+  const rows = viewRows(withReview({ default: null, repos: { "example-org/zeta": { skill: "x:other", model: "opus", params: { deep: true } } } }), "setup");
+  assert.deepEqual(rows.map((r) => r.scope), ["default", "example-org/zeta", "example-org/alpha", "example-org/helm"]);
+  assert.equal(describeSetting(rows[1].setting), "other · opus · deep");
+  assert.deepEqual(actionsFor(rows[0]).map((a) => a.id), ["edit"]);
+  assert.deepEqual(actionsFor(rows[1]).map((a) => [a.id, a.label]), [["edit", "Edit"], ["reset", "Use default"]]);
+  assert.equal(viewCount(withReview({ default: BUILTIN_SETTING, repos: { a: {} } }), "setup"), 2);
+  assert.equal(overrideCount(snap()), 0);
+  assert.equal(actionsFor(setupRows(withReview({ default: BUILTIN_SETTING, repos: {} }))[0])[1].label, "Use built-in");
+});
+
+test("setup rows are searchable by skill and by whether they override", () => {
+  const rows = viewRows(withReview({ default: null, repos: { "example-org/zeta": { skill: "x:other", model: "opus" } } }), "setup");
+  assert.deepEqual(filterRows(rows, "other").map((r) => r.scope), ["example-org/zeta"]);
+  assert.deepEqual(filterRows(rows, "override").map((r) => r.scope), ["example-org/zeta"]);
+});
+
+test("the form starts from the saved setting, else what the scope inherits, else the built-in", () => {
+  assert.deepEqual(formFor(null, null), { skill: BUILTIN_SETTING.skill, model: "sonnet", params: {} });
+  assert.deepEqual(formFor(null, { skill: "x:a", model: "haiku", params: { p: 1 } }), { skill: "x:a", model: "haiku", params: { p: 1 } });
+  const own = { skill: "x:b", params: { q: "v" } };
+  assert.deepEqual(formFor(own, { skill: "x:a" }), { skill: "x:b", model: "sonnet", params: { q: "v" } });
+});
+
+test("form edits return new values: a new skill drops the old params, empty values are removed", () => {
+  const form = formFor(null, null);
+  const withParams = setParam(setParam(form, "pos0", "deep"), "crossvendor", true);
+  assert.deepEqual(withParams.params, { pos0: "deep", crossvendor: true });
+  assert.deepEqual(form.params, {});
+  assert.deepEqual(setParam(withParams, "pos0", "").params, { crossvendor: true });
+  assert.deepEqual(setParam(withParams, "crossvendor", false).params, { pos0: "deep" });
+  assert.equal(chooseSkill(withParams, form.skill), withParams);
+  assert.deepEqual(chooseSkill(withParams, "x:other").params, {});
+  assert.equal(setModel(form, "opus").model, "opus");
+  assert.deepEqual(toPayload(withParams), { skill: form.skill, model: "sonnet", params: { pos0: "deep", crossvendor: true } });
+});
+
+test("the command preview lists params in the skill's order, like the engine will", () => {
+  const form = setParam(setParam(setParam(formFor(null, null), "crossvendor", true), "base", "main"), "pos0", "deep");
+  assert.equal(commandPreview(form, lekker), "/olko-github-pr:lekker-review <PR link> deep --base main --crossvendor");
+  assert.equal(commandPreview(formFor(null, null), lekker), "/olko-github-pr:lekker-review <PR link>");
+});
+
+test("skill search matches name, source and description", () => {
+  const skills = [lekker, { command: "my-review", source: "user", description: "style checker", params: [] }];
+  assert.deepEqual(filterSkills(skills, "style").map((s) => s.command), ["my-review"]);
+  assert.deepEqual(filterSkills(skills, "faang").map((s) => s.command), [lekker.command]);
+  assert.equal(filterSkills(skills, " ").length, 2);
+});
+
+test("why sections: reasons with causes and next steps, then guard denials, then log evidence", () => {
+  const sections = whySections({
+    status: "FAILED", attempts: 2, skill: "x:other-review", model: "sonnet", args: ["deep"], last_run_at: null,
+    reasons: [{ reason: "exit 1", meaning: "Process ended.", causes: ["bad arg"], next: ["fix it"] }], other_reasons: ["odd"],
+    guard_denials: 2, evidence: [{ label: "guard denied", text: "curl" }, { label: "guard denied", text: "wget" }],
+    run_dir: "/r", log_path: "/l", log_missing: false,
+  });
+  assert.deepEqual(sections.map((s) => s.title), ["failed · attempt 2", "exit 1", "odd", "2 guard denial(s)", "From the log: guard denied"]);
+  assert.deepEqual(sections[0].lines, ["Ran other-review · sonnet · deep"]);
+  assert.deepEqual(sections[1].lines, ["Process ended.", "Could be: bad arg", "Do: fix it"]);
+  assert.deepEqual(sections[4].lines, ["curl", "wget"]);
+});
+
+test("why says so when there is no log, and when the log file is gone", () => {
+  const base = { status: "FAILED", attempts: 1, skill: "s", model: "m", reasons: [], evidence: [] };
+  assert.equal(whySections({ ...base, run_dir: null }).at(-1).title, "No run log");
+  assert.equal(whySections({ ...base, run_dir: "/r", log_missing: true, log_path: "/l" }).at(-1).title, "Log missing");
+});
+
+test("a log is opened only from the engine's logs folder", () => {
+  const home = "/Users/me";
+  assert.equal(logPathOk(`${home}/.local/state/pr-autoreview/logs/o+r-1-abc-1.log`, home), true);
+  assert.equal(logPathOk(`${home}/.local/state/pr-autoreview/logs/../state.json`, home), false);
+  assert.equal(logPathOk(`${home}/.local/state/pr-autoreview/logs/x.md`, home), false);
+  assert.equal(logPathOk("/etc/passwd", home), false);
+  assert.equal(logPathOk(null, home), false);
+});
+
+test("engine argv for the new commands never goes through a shell string", () => {
+  assert.deepEqual(cli.reviewConfig(), ["review-config"]);
+  assert.deepEqual(cli.saveReview("o/r", { skill: "s", params: { a: "x y" } }), ["review-config", "set", "o/r", '{"skill":"s","params":{"a":"x y"}}']);
+  assert.deepEqual(cli.clearReview("default"), ["review-config", "clear", "default"]);
+  assert.deepEqual(cli.why("o/r#1"), ["why", "o/r#1"]);
 });
