@@ -28,10 +28,10 @@ const action = (t, id, label, onClick, { primary = false, disabled = false } = {
     .when(!disabled, (el) => el.cursor_pointer().hover((s) => s.opacity(0.88)).on_click((_e, cx) => { cx.stop_propagation(); onClick(cx); }))
     .child(label);
 
-const shell = (t, title, body, footer, onKey, handle, overlay) =>
+const shell = (t, title, body, footer, onKey, handle, overlay, onEscape) =>
   v_flex().id("pr-review-dialog").track_focus(handle).size_full().min_h(0).p(18).gap(10).rounded(8).bg(t.popover).text_size(13)
     .on_key_down((e, cx) => {
-      if (e.key === "escape") { closeOverlay(overlay); cx.stop_propagation(); } else onKey?.(e, cx);
+      if (e.key === "escape") { if (!onEscape?.(cx)) closeOverlay(overlay); cx.stop_propagation(); } else onKey?.(e, cx);
     })
     .child(h_flex().items_center().child(div().flex_1().text_size(15).font_semibold().text_color(t.foreground).child(title)).child(div().text_size(11).text_color(t.dim).child("Esc")))
     .child(body)
@@ -52,8 +52,14 @@ export class SetupPane {
     this.handle = cx.focus_handle();
     this.search = InputState.new({ placeholder: "Search review skills…" });
     this.search.on("change", (_e, cx) => cx.notify());
-    this.search.focus();
-    cx.timer.after(600, () => this.search.focus());
+    // The skill picker is a dropdown: closed it shows the chosen skill, open it adds the search box and the list.
+    this.open = false;
+    this.search.on("submit", (_e, cx) => {
+      const first = this.data && filterSkills(this.data.skills, this.search.value())[0];
+      if (first) this.pick(first.command, cx);
+    });
+    this.handle.focus();
+    cx.timer.after(600, () => { if (!this.open) this.handle.focus(); });
     cx.spawn(async (cx) => {
       const r = await this.engine.json(cli.reviewConfig());
       if (r.data) {
@@ -69,6 +75,22 @@ export class SetupPane {
 
   skillInfo() {
     return this.data?.skills.find((s) => s.command === this.form?.skill) ?? null;
+  }
+
+  setOpen(open, cx) {
+    this.open = open;
+    if (open) this.search.focus();
+    else {
+      this.search.set_value("");
+      this.handle.focus();
+    }
+    cx.notify();
+  }
+
+  pick(command, cx) {
+    this.form = chooseSkill(this.form, command);
+    this.rebuildInputs();
+    this.setOpen(false, cx);
   }
 
   rebuildInputs() {
@@ -128,12 +150,12 @@ export class SetupPane {
     const skills = filterSkills(this.data.skills, this.search.value());
     const inherited = this.scope === "default" ? BUILTIN_SETTING : this.data.config.default ?? BUILTIN_SETTING;
 
-    const list = v_flex().id("skill-list").h(170).flex_none().overflow_y_scrollbar().rounded(6).border_1().border_color(t.border)
+    const list = v_flex().id("skill-list").h(190).flex_none().overflow_y_scrollbar().rounded(6).border_1().border_color(t.border)
       .children(skills.length ? skills.map((s) => {
         const on = s.command === this.form.skill;
         return v_flex().id(`skill-${s.command}`).px(10).py(5).gap(1).cursor_pointer().bg(on ? t.selected : t.popover)
           .hover((st) => st.bg(t.hover))
-          .on_click((_e, cx) => { this.form = chooseSkill(this.form, s.command); this.rebuildInputs(); cx.notify(); })
+          .on_click((_e, cx) => this.pick(s.command, cx))
           .child(h_flex().gap(8).items_center()
             .child(div().text_size(12.5).text_color(t.foreground).child(s.command))
             .child(div().text_size(10.5).text_color(t.dim).child(s.source))
@@ -149,10 +171,23 @@ export class SetupPane {
       ? v_flex().gap(7).children(info.params.map((f) => this.field(t, f, cx)))
       : div().text_size(11.5).text_color(t.dim).child(info?.hint ? "This skill's argument hint has no optional parameters." : "This skill declares no parameters (no argument-hint).");
 
+    const trigger = h_flex().id("skill-trigger").h(48).flex_none().px(10).gap(10).items_center().rounded(6).border_1()
+      .border_color(this.open ? t.accent : t.border).bg(t.background).cursor_pointer().hover((st) => st.bg(t.hover))
+      .on_click((_e, cx) => { cx.stop_propagation(); this.setOpen(!this.open, cx); })
+      .child(v_flex().flex_1().min_w(0).gap(1)
+        .child(h_flex().gap(8).items_center()
+          .child(div().text_size(12.5).text_color(t.foreground).child(info?.command ?? "Choose a review skill"))
+          .child(div().text_size(10.5).text_color(t.dim).child(info?.source ?? "")))
+        .child(div().truncate().text_size(11).text_color(t.dim).child(info?.description || "no description")))
+      .child(div().text_size(10.5).text_color(info?.tested ? t.done : (t.ansi3 ?? t.blocked)).child(info ? (info.tested ? "tested" : "untested") : ""))
+      .child(div().text_size(12).text_color(t.muted).child(this.open ? "▴" : "▾"));
+
     const body = v_flex().flex_1().min_h(0).gap(10)
-      .child(h_flex().h(30).px(10).items_center().rounded(6).border_1().border_color(t.accent).bg(t.background)
-        .child(Input.new(this.search).flex_1().h_full().text_size(12.5).text_color(t.foreground)))
-      .child(list)
+      .child(trigger)
+      .when(this.open, (el) => el
+        .child(h_flex().h(30).px(10).items_center().rounded(6).border_1().border_color(t.accent).bg(t.background)
+          .child(Input.new(this.search).flex_1().h_full().text_size(12.5).text_color(t.foreground)))
+        .child(list))
       .child(model)
       .child(params)
       .child(div().text_size(11).text_color(t.dim).child(`Runs: ${commandPreview(this.form, info)}  ·  inherits ${describeSetting(inherited)}`))
@@ -164,7 +199,11 @@ export class SetupPane {
       .when(this.hasOwn, (el) => el.child(action(t, "clear", this.scope === "default" ? "Use built-in" : "Use default", (cx) => this.send(cli.clearReview(this.scope), cx), { disabled: this.busy })))
       .child(action(t, "cancel", "Cancel", () => closeOverlay(this.overlay)))
       .child(action(t, "save", this.busy ? "Saving…" : "Save", (cx) => this.send(cli.saveReview(this.scope, toPayload(this.form)), cx), { primary: true, disabled: this.busy }));
-    return shell(t, title, body, footer, null, this.handle, this.overlay);
+    return shell(t, title, body, footer, null, this.handle, this.overlay, (cx) => {
+      if (!this.open) return false;
+      this.setOpen(false, cx);
+      return true;
+    });
   }
 }
 
