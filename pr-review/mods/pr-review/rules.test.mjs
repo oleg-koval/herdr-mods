@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import {
   NEEDS_YOU, actionsFor, age, clampIndex, cli, countdown, failedCount, filterRows, matches, money, needsCount,
   pageOf, paginate, parseSnapshot, prUrl, pullsUrl, shortRepo, statusMeta, viewCount, viewRows,
-  findTab, miniStatus, panelPath, reviewPathOk, VIEWS, VIEW_LABEL, nextView,
+  findTab, miniStatus, execFailure, execTimeout, EXEC_MS, SYNC_MS, panelPath, reviewPathOk, VIEWS, VIEW_LABEL, nextView,
 } from "./rules.js";
 
 const pr = (n, status, extra = {}) => ({
@@ -182,4 +182,17 @@ test("nextView cycles the sidebar, and leaves Reviewing now at the list's ends",
   assert.equal(nextView("needs", -1), "runs");
   assert.equal(nextView("running", 1), "needs");
   assert.equal(nextView("running", -1), "runs");
+});
+
+test("Refresh (sync) gets a longer exec timeout than a plain read", () => {
+  assert.equal(execTimeout(cli.read()), EXEC_MS);
+  assert.equal(execTimeout(cli.pause()), EXEC_MS);
+  assert.equal(execTimeout(cli.sync()), SYNC_MS);
+  assert.ok(SYNC_MS > EXEC_MS);
+});
+
+test("an exec timeout is shown as a plain sentence, any other throw keeps its text", () => {
+  const timeout = new Error("`herdr.exec`: /Users/me/bin/pr-autoreview took too long");
+  assert.equal(execFailure(timeout, 120000), "engine took longer than 120s; try again");
+  assert.match(execFailure(new Error("spawn ENOENT"), 20000), /^could not run engine: .*spawn ENOENT/);
 });
